@@ -1,0 +1,47 @@
+# configs/phl_geoconv_regression.yaml
+
+task: train        # "train", "validate", "explain", etc.
+
+experiment_name: "usaid_dhs_pct_water_improved"
+output_dir: "artifacts/checkpoints/phl_geoconv_income"
+
+dataset:
+  type: json                   # maps to JSONGeoAdapter via DatasetRegistry
+  data_root: "/data/phl"
+  prefix: "pct_improved_water_africa"
+  batch_size: 16
+  img_size: [224, 224]
+  num_workers: 0
+  seed: 1337
+  # (future) sampler:
+  #   name: spatial_stratified
+  #   params:
+  #     min_distance_km: 5
+
+model:
+  name: geoconv                # maps to GeoConvNativeRegressor via ModelRegistry
+  params:
+    pretrained: false
+    # anything else your wrapper needs (in_channels, etc.)
+
+trainer:
+  epochs: 1
+  lr: 1e-4
+  device: "cuda"
+  save_every: 1
+  eval_every: 1
+  early_stop: null             # or {patience: 3, metric: "val_rmse"}
+
+# validate:
+#   enabled: true
+#   ckpt_dir: "${output_dir}"    # you can literal-substitute or resolve in code
+#   metrics: ["rmse", "r2"]
+
+# explain:
+#   enabled: true
+#   method: simba                # could also be "sia" later
+#   ckpt_dir: "${output_dir}"
+#   distances_km: [0.25, 1, 5, 10, 15]
+#   max_instances: 200
+#   save_plots: true
+#   save_tables: true

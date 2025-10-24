@@ -1,0 +1,28 @@
+# configs/phl_geoconv_regression.yaml
+
+task: train        # "train", "validate", "explain", etc.
+
+experiment_name: "usaid_dhs_pct_water_improved"
+output_dir: "/scratch/hbaier/new_data/sail_test/"
+
+dataset:
+  type: json                   # maps to JSONGeoAdapter via DatasetRegistry
+  data_root: "/scratch/hbaier/new_data/usaid_dhs/imagery/"
+  prefix: "pct_improved_water_africa"
+  batch_size: 16
+  img_size: [224, 224]
+  num_workers: 0
+  seed: 1337
+
+model:
+  name: geoconv                # maps to GeoConvNativeRegressor via ModelRegistry
+  params:
+    pretrained: false
+
+trainer:
+  epochs: 1
+  lr: 1e-4
+  device: "cuda"
+  save_every: 1
+  eval_every: 1
+  early_stop: null             # or {patience: 3, metric: "val_rmse"}
