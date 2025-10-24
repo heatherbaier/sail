@@ -1,0 +1,28 @@
+Metadata-Version: 2.4
+Name: sail
+Version: 0.1.0
+Summary: SAIL: Spatial AI Library
+Author: Heather Baier
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch>=2.2
+Requires-Dist: torchvision>=0.17
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scipy
+Requires-Dist: geopandas
+Requires-Dist: shapely
+Requires-Dist: rasterio
+Requires-Dist: rioxarray
+Requires-Dist: scikit-learn
+Requires-Dist: scikit-learn
+Requires-Dist: matplotlib
+Requires-Dist: tqdm
+Requires-Dist: pyyaml
+Requires-Dist: typer
+Requires-Dist: haversine
+Dynamic: license-file
+
+# SAIL

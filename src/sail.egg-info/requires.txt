@@ -1,0 +1,16 @@
+torch>=2.2
+torchvision>=0.17
+numpy
+pandas
+scipy
+geopandas
+shapely
+rasterio
+rioxarray
+scikit-learn
+scikit-learn
+matplotlib
+tqdm
+pyyaml
+typer
+haversine

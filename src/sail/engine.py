@@ -5,7 +5,7 @@ import os
 import torch
 from .core.builders import build_dataset, build_model, build_trainer, build_explainer
 from .utils.io import save_metrics_csv  # imaginary helper you’ll add
-from .training import loops            # validation loops etc.
+# from .training import loops            # validation loops etc.
 
 def load_config(path: str) -> dict:
     with open(path, "r") as f:
@@ -25,34 +25,37 @@ def run_training(cfg):
     ds = build_dataset(cfg["dataset"])
     model_wrapper, net = build_model(cfg["model"])
 
+    # print(net)
+
     trainer = build_trainer(
         cfg_trainer=cfg["trainer"],
         model_wrapper=model_wrapper,
         dataset=ds,
         model_name=cfg["model"]["name"],
         batch_size=cfg["dataset"]["batch_size"],
+        ckpt_dir = cfg["output_dir"]
     )
     trainer.fit()  # you already have Trainer.fit() in your CLI train path. :contentReference[oaicite:8]{index=8}
     return ds, model_wrapper, net  # return for downstream steps
 
-def run_validation(cfg, ds, model_wrapper):
-    if not cfg.get("validate", {}).get("enabled", False):
-        return None
-    ckpt_dir = cfg["validate"].get("ckpt_dir", cfg["output_dir"])
+# def run_validation(cfg, ds, model_wrapper):
+#     if not cfg.get("validate", {}).get("enabled", False):
+#         return None
+#     ckpt_dir = cfg["validate"].get("ckpt_dir", cfg["output_dir"])
 
-    # load best / latest checkpoint
-    model_wrapper.load(/* path to best/last ckpt in ckpt_dir */)
+#     # load best / latest checkpoint
+#     model_wrapper.load(/* path to best/last ckpt in ckpt_dir */)
 
-    metrics = loops.validate_loop(
-        model_wrapper,
-        ds,                   # or ds.val_loader()
-        device=cfg["trainer"].get("device", "cuda"),
-        metrics_to_compute=cfg["validate"].get("metrics", []),
-        ckpt_dir=ckpt_dir,
-    )
+#     metrics = loops.validate_loop(
+#         model_wrapper,
+#         ds,                   # or ds.val_loader()
+#         device=cfg["trainer"].get("device", "cuda"),
+#         metrics_to_compute=cfg["validate"].get("metrics", []),
+#         ckpt_dir=ckpt_dir,
+#     )
 
-    save_metrics_csv(metrics, os.path.join(ckpt_dir, "val_metrics.csv"))
-    return metrics
+#     save_metrics_csv(metrics, os.path.join(ckpt_dir, "val_metrics.csv"))
+#     return metrics
 
 def run_explain(cfg, ds, net):
     exp_cfg = cfg.get("explain", {})

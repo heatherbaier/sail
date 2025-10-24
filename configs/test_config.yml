@@ -9,7 +9,7 @@ dataset:
   type: json                   # maps to JSONGeoAdapter via DatasetRegistry
   data_root: "/scratch/hbaier/new_data/usaid_dhs/imagery/"
   prefix: "pct_improved_water_africa"
-  batch_size: 16
+  batch_size: 1
   img_size: [224, 224]
   num_workers: 0
   seed: 1337
@@ -21,8 +21,8 @@ model:
 
 trainer:
   epochs: 1
-  lr: 1e-4
+  lr: .00001
   device: "cuda"
-  save_every: 1
+  # save_every: 1
   eval_every: 1
   early_stop: null             # or {patience: 3, metric: "val_rmse"}

@@ -39,14 +39,12 @@ class Trainer:
         best_loss = 1000000000000
         for ep in range(self.cfg.epochs):
 
-
             with open(f"{path}/records.txt", "a") as f:
                 f.write('Epoch {}/{}\n'.format(ep, self.cfg.epochs - 1))
 
             with open(f"{path}/records.txt", "a") as f:
                 f.write('----------\n')
             
-
             # training loop
             self.mw.net.train()
             pbar = tqdm.tqdm(self.ds.train_loader(), desc=f"epoch {ep+1}/{self.cfg.epochs}")
@@ -54,6 +52,9 @@ class Trainer:
             for c, batch in enumerate(pbar):
                 
                 batch = {k: (v.to(self.cfg.device) if hasattr(v, "to") else v) for k,v in batch.items()}
+
+                # print(batch["image"].shape)
+
                 # with torch.cuda.amp.autocast(enabled=self.cfg.amp):
                 pred = self.mw.forward(batch)                
                 loss = self.mw.compute_loss(pred, batch)

@@ -56,6 +56,7 @@ class GeoConvNativeRegressor(BaseModelWrapper):
         # class_name: str,
         model_kwargs: Optional[Dict[str, Any]] = None,
         num_outputs: int = 1,   # kept for symmetry; your model should already output 1-dim for regression
+        pretrained: bool = False
     ):
         # self.module_path = module_path
         # self.class_name = class_name

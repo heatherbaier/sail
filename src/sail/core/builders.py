@@ -35,19 +35,20 @@ def build_model(cfg_model: dict):
     name = cfg_model["name"]
     params = cfg_model.get("params", {})
     model_wrapper_cls = ModelRegistry.get(name)
+    # print(params)
     model_wrapper = model_wrapper_cls(**params)
     model = model_wrapper.build()
     return model_wrapper, model
 
 
-def build_trainer(cfg_trainer: dict, model_wrapper, dataset, model_name: str, batch_size: int):
+def build_trainer(cfg_trainer: dict, model_wrapper, dataset, model_name: str, batch_size: int, ckpt_dir: str):
     train_cfg = TrainConfig(
         epochs=cfg_trainer["epochs"],
         lr=cfg_trainer["lr"],
-        ckpt_dir=cfg_trainer.get("ckpt_dir"),
+        ckpt_dir = ckpt_dir,
         device=cfg_trainer.get("device", "cuda"),
-        save_every=cfg_trainer.get("save_every", 1),
-        eval_every=cfg_trainer.get("eval_every", 1),
+        # save_every=cfg_trainer.get("save_every", 1),
+        # eval_every=cfg_trainer.get("eval_every", 1),
     )
     return Trainer(model_wrapper, dataset, train_cfg, model_name, batch_size)
 

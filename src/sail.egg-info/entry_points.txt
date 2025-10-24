@@ -1,0 +1,2 @@
+[console_scripts]
+simba = sail.cli.main:app
