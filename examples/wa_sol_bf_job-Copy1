@@ -1,0 +1,25 @@
+#!/bin/bash
+
+#SBATCH -N 1            # number of nodes
+#SBATCH -G 1
+#SBATCH -c 8            # number of cores 
+#SBATCH -t 32:00:00   # time in d-hh:mm:ss
+#SBATCH -p general      # partition 
+#SBATCH -q public       # QOS
+#SBATCH -o slurm.%j.out # file to save job's STDOUT (%j = JobId)
+#SBATCH -e slurm.%j.err # file to save job's STDERR (%j = JobId)
+#SBATCH --mail-type=ALL # Send an e-mail when a job starts, stops, or fails
+#SBATCH --mail-user="%u@asu.edu"
+#SBATCH --export=NONE   # Purge the job-submitting shell environment
+
+#Load required software
+module load mamba/latest
+
+#Activate our enviornment
+source activate main
+
+#Change to the directory of our script
+cd /home/hbaier/projects/simba/src
+
+#Run the software/python script
+python3 -m simba.cli.main train --model biasField --dataset json --data-root /scratch/hbaier/data_jsons --prefix phl --ckpt-dir /home/hbaier/projects/simba/artifacts/phl_bs64_biasField_v1 --epochs 200 --batch-size 64

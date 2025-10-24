@@ -1,0 +1,33 @@
+#!/bin/tcsh
+# Job name:
+#SBATCH --job-name=phl_simba_tang
+#
+# Number of nodes:
+#SBATCH --nodes=1
+#
+# Number of tasks (one for each GPU desired for use case) (example):
+#SBATCH --ntasks=1
+#
+#Number of GPUs, this can be in the format of "gpu:[1-4]", or "gpu:K80:[1-4] with the$
+#SBATCH --gres=gpu:1
+#
+# Wall clock limit:
+#SBATCH --time=72:00:00
+#
+## Command(s) to run (example):
+
+nvidia-smi
+
+cd /sciclone/geograd/heather_data/simba/
+
+module load miniforge3/24.9.2-0
+
+activate simba
+
+pip install -e .
+
+# python3 -m simba.cli.main train --model tang2015 --dataset json --data-root /sciclone/geograd/heather_data/clean_dataset_jsons --prefix phl --with-neighbors --ckpt-dir /sciclone/geograd/heather_data/simba/artifacts/phl_v1 --epochs 200
+
+# python3 -m simba.cli.main train --model tang2015 --dataset json --data-root /sciclone/geograd/heather_data/clean_dataset_jsons --prefix phl --with-neighbors --ckpt-dir /sciclone/geograd/heather_data/simba/artifacts/phl_bs32_v1 --epochs 200 --batch-size 32
+
+python3 -m simba.cli.main train --model r18_wc --dataset json --data-root /sciclone/geograd/heather_data/clean_dataset_jsons --prefix phl --with-neighbors --ckpt-dir /sciclone/geograd/heather_data/simba/artifacts/phl_bs32_r18_v2 --epochs 200 --batch-size 32

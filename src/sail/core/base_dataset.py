@@ -1,0 +1,13 @@
+from abc import ABC, abstractmethod
+from torch.utils.data import DataLoader
+
+class BaseDatasetAdapter(ABC):
+    @abstractmethod
+    def train_loader(self) -> DataLoader: ...
+    @abstractmethod
+    def val_loader(self) -> DataLoader: ...
+    @abstractmethod
+    def test_loader(self) -> DataLoader: ...
+    @property
+    @abstractmethod
+    def spatial_crs(self) -> str: ...
