@@ -3,9 +3,15 @@
 import yaml
 import os
 import torch
-from .core.builders import build_dataset, build_model, build_trainer, build_explainer
+import re
+from pathlib import Path
+from .core.builders import build_dataset, build_validation_dataset, build_model, build_trainer, build_explainer
 from .utils.io import save_metrics_csv  # imaginary helper you’ll add
 # from .training import loops            # validation loops etc.
+
+import typer
+import tqdm
+import pandas as pd
 
 def load_config(path: str) -> dict:
     with open(path, "r") as f:
@@ -22,7 +28,7 @@ def load_config(path: str) -> dict:
     return _resolve(cfg)
 
 def run_training(cfg):
-    ds = build_dataset(cfg["dataset"])
+    ds = build_dataset(cfg["dataset"], cfg)
     model_wrapper, net = build_model(cfg["model"])
 
     # print(net)
@@ -38,24 +44,87 @@ def run_training(cfg):
     trainer.fit()  # you already have Trainer.fit() in your CLI train path. :contentReference[oaicite:8]{index=8}
     return ds, model_wrapper, net  # return for downstream steps
 
-# def run_validation(cfg, ds, model_wrapper):
-#     if not cfg.get("validate", {}).get("enabled", False):
-#         return None
-#     ckpt_dir = cfg["validate"].get("ckpt_dir", cfg["output_dir"])
 
-#     # load best / latest checkpoint
-#     model_wrapper.load(/* path to best/last ckpt in ckpt_dir */)
+def highest_epoch(dir_path=".", max_epoch=None):
+    pat = re.compile(r"^model_epoch(\d+)\.torch$")
+    best = max(
+        (
+            (int(m.group(1)), p)
+            for p in Path(dir_path).iterdir()
+            if (m := pat.match(p.name))
+            and (max_epoch is None or int(m.group(1)) <= max_epoch)
+        ),
+        default=(None, None),
+    )
+    return best  # (epoch_number, Path)
 
-#     metrics = loops.validate_loop(
-#         model_wrapper,
-#         ds,                   # or ds.val_loader()
-#         device=cfg["trainer"].get("device", "cuda"),
-#         metrics_to_compute=cfg["validate"].get("metrics", []),
-#         ckpt_dir=ckpt_dir,
-#     )
 
-#     save_metrics_csv(metrics, os.path.join(ckpt_dir, "val_metrics.csv"))
-#     return metrics
+def run_validation(cfg):
+    
+
+
+    ds = build_validation_dataset(cfg["dataset"], cfg)
+    
+    ckpt_dir = cfg["output_dir"]#.get("ckpt_dir", cfg["output_dir"])
+
+    # load best / latest checkpoint
+    # model_wrapper.load(/* path to best/last ckpt in ckpt_dir */)
+
+    model_wrapper, net = build_model(cfg["model"])
+
+
+    # mw = ModelRegistry.get(model)()#.build()
+    epoch, path = highest_epoch(ckpt_dir)
+    print(epoch, path)
+    model_wrapper.load(path)
+
+    device = cfg["validator"]["device"]
+
+    model_wrapper.net = model_wrapper.net.to(device).eval()
+    
+
+    imnames, preds, labels = [], [], []
+    for c, batch in tqdm.tqdm(enumerate(ds), desc = "Validating"):
+
+        batch = {k: (v.to(device).unsqueeze(0) if hasattr(v, "to") else v) for k,v in batch.items()}
+
+        out = model_wrapper.forward(batch)
+        
+        # print(, batch["label"])
+
+        imnames.append(batch["image_name"])
+        preds.append(out.item())
+        labels.append(batch["label"].item())
+
+        # print(imnames, preds, labels)
+        
+        
+        if c % 10:
+            df = pd.DataFrame()
+            df["name"], df["pred"], df["label"] = imnames, preds, labels
+            df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))
+
+        df = pd.DataFrame()
+        df["name"], df["pred"], df["label"] = imnames, preds, labels
+        df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))  
+
+    
+
+
+    # gdfgsg
+
+    
+
+    # metrics = loops.validate_loop(
+    #     model_wrapper,
+    #     ds,                   # or ds.val_loader()
+    #     device=cfg["trainer"].get("device", "cuda"),
+    #     metrics_to_compute=cfg["validate"].get("metrics", []),
+    #     ckpt_dir=ckpt_dir,
+    # )
+
+    # save_metrics_csv(metrics, os.path.join(ckpt_dir, "val_metrics.csv"))
+    # return metrics
 
 def run_explain(cfg, ds, net):
     exp_cfg = cfg.get("explain", {})
@@ -81,8 +150,8 @@ def run(cfg_path):
     if task == "train":
         ds, mw, net = run_training(cfg)
     elif task == "validate":
-        ds, mw, net = run_training(cfg)  # or load ckpt
-        run_validation(cfg, ds, mw)
+        # ds, mw, net = run_training(cfg)  # or load ckpt
+        run_validation(cfg)
     elif task == "explain":
         ds, mw, net = run_training(cfg)  # or load ckpt
         run_explain(cfg, ds, net)

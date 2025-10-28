@@ -31,7 +31,9 @@ src/sail/models/coordRegressor.py
 src/sail/models/coordconv_resnet.py
 src/sail/models/geoconv.py
 src/sail/models/resnet18.py
+src/sail/models/swin.py
 src/sail/models/tang2015.py
 src/sail/models/utils.py
 src/sail/training/trainer.py
+src/sail/utils/io.py
 src/sail/utils/utils.py

@@ -1,14 +1,52 @@
 # src/sail/core/builders.py
 
 from .registries import ModelRegistry, DatasetRegistry, ExplainerRegistry
-from ..data.adapters import JSONGeoAdapter, resolve_json_paths
+from ..data.adapters import SimbaJSONDataset, JSONGeoAdapter, resolve_json_paths
 from ..explain.simba import Simba  # (later: also SIAExplainer, etc.)
 from ..training.trainer import Trainer, TrainConfig
 
 import os
 import torch
 
-def build_dataset(cfg_dataset: dict):
+
+
+
+def build_validation_dataset(cfg_dataset: dict, cfg: dict):
+
+    from ..data.adapters import JSONGeoAdapter, resolve_json_paths
+
+    ys_path, coords_path, dup_path = resolve_json_paths(
+        data_root=cfg_dataset["data_root"],
+        prefix=cfg_dataset["prefix"],
+        with_neighbors=False,   # explicitly off
+    )
+
+    ds = SimbaJSONDataset(
+        root_dir = cfg["dataset"]["data_root"],
+        ys_path = ys_path,
+        coords_path = coords_path,
+        dup_path = dup_path,
+        ckpt_dir = cfg["output_dir"],
+        validate = True,
+    )
+
+    
+
+    # ds = JSONGeoAdapter(
+    #     root_dir=cfg_dataset["data_root"],
+    #     ys_path=ys_path,
+    #     coords_path=coords_path,
+    #     dup_path=dup_path,
+    #     batch_size=cfg_dataset["batch_size"],
+    #     img_size=tuple(cfg_dataset.get("img_size", [224, 224])),
+    #     num_workers=cfg_dataset.get("num_workers", 0),
+    #     ckpt_dir = cfg["output_dir"],
+    # )
+
+    return ds
+
+def build_dataset(cfg_dataset: dict, cfg: dict):
+
     from ..data.adapters import JSONGeoAdapter, resolve_json_paths
 
     ys_path, coords_path, dup_path = resolve_json_paths(
@@ -25,7 +63,7 @@ def build_dataset(cfg_dataset: dict):
         batch_size=cfg_dataset["batch_size"],
         img_size=tuple(cfg_dataset.get("img_size", [224, 224])),
         num_workers=cfg_dataset.get("num_workers", 0),
-        ckpt_dir=cfg_dataset.get("output_dir", "."),
+        ckpt_dir = cfg["output_dir"],
     )
 
     return ds
@@ -35,7 +73,7 @@ def build_model(cfg_model: dict):
     name = cfg_model["name"]
     params = cfg_model.get("params", {})
     model_wrapper_cls = ModelRegistry.get(name)
-    # print(params)
+    print(params)
     model_wrapper = model_wrapper_cls(**params)
     model = model_wrapper.build()
     return model_wrapper, model

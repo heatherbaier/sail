@@ -1,0 +1,27 @@
+# configs/phl_geoconv_regression.yaml
+
+task: validate        # "train", "validate", "explain", etc.
+
+experiment_name: "usaid_dhs_pct_water_improved"
+output_dir: "/scratch/hbaier/new_data/usaid_dhs/artifacts/test_swin/"
+
+dataset:
+  type: json                   # maps to JSONGeoAdapter via DatasetRegistry
+  data_root: "/scratch/hbaier/new_data/usaid_dhs/imagery/"
+  prefix: "pct_improved_water_africa"
+  img_size: [224, 224]
+  num_workers: 0
+  seed: 1337
+
+model:
+  name: swin                # maps to GeoConvNativeRegressor via ModelRegistry
+  params:
+    weights: "IMAGENET1K_V1"
+
+validator:
+#   epochs: 200
+#   lr: .00001
+  device: "cuda"
+#   # save_every: 1
+#   eval_every: 1
+#   early_stop: null             # or {patience: 3, metric: "val_rmse"}
