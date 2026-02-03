@@ -75,7 +75,7 @@ class GeoConvNativeRegressor(BaseModelWrapper):
         # Keep your original calling convention: (image, coords)
         # Do NOT normalize or reorder coordinates here.
         out = self.net(batch["image"], batch["coords"])
-        return out
+        return out, None
 
     def compute_loss(self, pred, batch: Dict[str, Any]):
         # L1 regression by default; adjust if your training used MSE etc.
@@ -95,10 +95,19 @@ class GeoConvNativeRegressor(BaseModelWrapper):
 
     def load(self, path: str) -> None:
         ckpt = torch.load(path, map_location="cpu")
+        # print(ckpt)
         self.num_classes = ckpt["num_classes"]
         self.build()
         assert self.net is not None
-        self.net.load_state_dict(ckpt["state_dict"])
+        # print("weights pre load: ", self.net.conv1.hypernet.fc1.weight)
+        # np = [n for n,p in self.net.named_parameters()]
+        # print("LOADED KEYS: ", ckpt["state_dict"].keys())
+        # print("NAMED PARAMS: ", np)
+        print("FC1 wieghts: ", ckpt["state_dict"]["conv1.hypernet.fc1.weight"])
+        self.net.load_state_dict(ckpt["state_dict"], strict=True)
+        # print("weights post load: ", self.net.conv1.hypernet.fc1.weight)
+
+        # dajgkaj
 
 
         

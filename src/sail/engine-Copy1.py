@@ -13,7 +13,6 @@ import typer
 import tqdm
 import pandas as pd
 
-
 def load_config(path: str) -> dict:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
@@ -41,7 +40,7 @@ def run_training(cfg):
     else:
         ds = build_dataset(cfg["dataset"], cfg, bs)
         
-    model_wrapper, net, _ = build_model(cfg["model"])
+    model_wrapper, net = build_model(cfg["model"])
 
     # print(net)
 
@@ -58,42 +57,6 @@ def run_training(cfg):
     return ds, model_wrapper, net  # return for downstream steps
 
 
-
-
-def continue_training(cfg):
-
-    # set batch size correctly
-    if cfg["model"]["name"] == "geoconv":
-        print("geoconv!!")
-        bs = 1
-    else:
-        bs = cfg["dataset"]["batch_size"]
-
-    # actually build the dataset
-    if cfg["dataset"]["temporal"]:
-        ds = build_temporal_dataset(cfg["dataset"], cfg, bs)
-    else:
-        ds = build_dataset(cfg["dataset"], cfg, bs)
-        
-    model_wrapper, net, start_epoch = build_model(cfg["model"], cfg = cfg, continue_training = True)
-
-    # print(net)
-
-    trainer = build_trainer(
-        cfg_trainer = cfg["trainer"],
-        model_wrapper = model_wrapper,
-        dataset = ds,
-        model_name = cfg["model"]["name"],
-        batch_size = cfg["dataset"]["batch_size"],
-        ckpt_dir = cfg["output_dir"],
-        start_epoch = start_epoch
-    )
-    trainer.fit()  # you already have Trainer.fit() in your CLI train path. :contentReference[oaicite:8]{index=8}
-
-    return ds, model_wrapper, net  # return for downstream steps
-
-
-
 def highest_epoch(dir_path=".", max_epoch=None):
     pat = re.compile(r"^model_epoch(\d+)\.torch$")
     best = max(
@@ -108,86 +71,35 @@ def highest_epoch(dir_path=".", max_epoch=None):
     return best  # (epoch_number, Path)
 
 
-def unpack_outputs(out):
-    """
-    Standardizes model output into (pred, extras) form.
-    pred is always a tensor.
-    extras can be None, a tensor, tuple, dict, etc.
-    """
-
-    # Case 1: dict
-    if isinstance(out, dict):
-        pred = out["pred"]
-        extras = {k: v for k, v in out.items() if k != "pred"}
-        return pred, extras if extras else None
-
-    # Case 2: tuple or list
-    elif isinstance(out, (tuple, list)):
-        pred = out[0]
-        extras = out[1:] if len(out) > 1 else None
-        return pred, extras
-
-    # Case 3: just a tensor
-    else:
-        return out, None
-
-
-
 def run_validation(cfg):
     
     ckpt_dir = cfg["output_dir"]#.get("ckpt_dir", cfg["output_dir"])
     device = cfg["validator"]["device"]
     
-    # ds = build_validation_dataset(cfg["dataset"], cfg)
-
-    if cfg["dataset"]["temporal"]:
-        ds = build_validation_dataset(cfg["dataset"], cfg, temporal = True)
-        # ds = ds.test_loader()
-    else:
-        ds = build_validation_dataset(cfg["dataset"], cfg, temporal = False)
-
+    ds = build_validation_dataset(cfg["dataset"], cfg)
     
-    
-    model_wrapper, net, _ = build_model(cfg["model"])
+    model_wrapper, net = build_model(cfg["model"])
     epoch, path = highest_epoch(ckpt_dir)
     print(epoch, path)
     model_wrapper.load(path)
     model_wrapper.net = model_wrapper.net.to(device).eval()
     
-    imnames, preds, labels, all_extras = [], [], [], []
+    imnames, preds, labels = [], [], []
     for c, batch in tqdm.tqdm(enumerate(ds), desc = "Validating"):
         batch = {k: (v.to(device).unsqueeze(0) if hasattr(v, "to") else v) for k,v in batch.items()}
         out = model_wrapper.forward(batch)
-        pred, extras = unpack_outputs(out)
-        # print(pred, extras[0][0])
-        # jdkjaga
         imnames.append(batch["image_name"])
-        preds.append(pred.item())
+        preds.append(out.item())
         labels.append(batch["label"].item())
-
-        if extras[0] is not None:
-            all_extras.append(extras[0].detach().cpu().numpy().flatten())
-        else:
-            all_extras.append(0)
-
-        # print("EXTRAS: ", extras)
 
         if c % 10:
             df = pd.DataFrame()
-            df["name"], df["pred"], df["label"], df["extra"] = imnames, preds, labels, all_extras
-            
-            # if extras[0] is not None:
-                # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
-                
+            df["name"], df["pred"], df["label"] = imnames, preds, labels
             df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))
 
-    df = pd.DataFrame()
-    df["name"], df["pred"], df["label"], df["extra"] = imnames, preds, labels, all_extras
-    
-    # if extras[0] is not None:
-        # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
-        
-    df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))  
+        df = pd.DataFrame()
+        df["name"], df["pred"], df["label"] = imnames, preds, labels
+        df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))  
 
     # metrics = loops.validate_loop(
     #     model_wrapper,
@@ -224,8 +136,6 @@ def run(cfg_path):
 
     if task == "train":
         ds, mw, net = run_training(cfg)
-    if task == "continue_training":
-        ds, mw, net = continue_training(cfg)
     elif task == "validate":
         # ds, mw, net = run_training(cfg)  # or load ckpt
         run_validation(cfg)

@@ -361,7 +361,8 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         split: Tuple[float,float,float] = (0.8, 0.1, 0.1),
         shuffle_train: bool = True,
         num_workers: int = 0,
-        seed: int = 1337,
+        seed: int = 1337, # need to handle if input is None I think
+        write_files = True
     ):
         # Build an index over the full set to split once
         full = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
@@ -389,14 +390,22 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                        split_indices=test_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed)
 
-        # Write validation indices to file
-        with open(f"{ckpt_dir}/val_indices.txt", "w") as val_file:
-            val_file.write('\n'.join(map(str, self._val.items)))           
+        print("Seed: ", seed)
+        print("Write Files: ", write_files)
 
-        # Write validation indices to file
-        with open(f"{ckpt_dir}/test_indices.txt", "w") as test_file:
-            test_file.write('\n'.join(map(str, self._test.items)))     
+        # jdkajgaklj
 
+        if write_files:
+
+            # Write validation indices to file
+            with open(f"{ckpt_dir}/val_indices.txt", "w") as val_file:
+                val_file.write('\n'.join(map(str, self._val.items)))           
+    
+            # Write validation indices to file
+            with open(f"{ckpt_dir}/test_indices.txt", "w") as test_file:
+                test_file.write('\n'.join(map(str, self._test.items)))     
+
+        
         self.bs = batch_size
         self.shuffle_train = shuffle_train
         self.num_workers = num_workers

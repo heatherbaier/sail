@@ -9,6 +9,8 @@ from .coordconv_resnet import CoordConvResNetRegressor  # noqa: F401
 from .biasfield_resnet import BiasFieldResNetRegressor  # noqa: F401
 from .geoconv import GeoConvNativeRegressor  # noqa: F401
 from .swin import SwinRegressor  # noqa: F401
+from .temporal_resnet import TemporalResNetModule  # noqa: F401
+
 
 
 # Register them under CLI-friendly names
@@ -19,3 +21,4 @@ ModelRegistry.register("coordConv")(CoordConvResNetRegressor)
 ModelRegistry.register("biasField")(BiasFieldResNetRegressor)
 ModelRegistry.register("geoconv")(GeoConvNativeRegressor)
 ModelRegistry.register("swin")(SwinRegressor)
+ModelRegistry.register("temporal_resnet")(TemporalResNetModule)

@@ -1,0 +1,29 @@
+# configs/phl_geoconv_regression.yaml
+
+task: validate        # "train", "validate", "explain", etc.
+
+experiment_name: "tempres_nat_phl"
+output_dir: "/scratch/hbaier/new_data/phl_temporal/artifacts/full_8m_v4/"
+
+dataset:
+  type: json                   # maps to JSONGeoAdapter via DatasetRegistry
+  data_root: "/scratch/hbaier/new_data/phl_temporal/full_imagery/"
+  prefix: "phl_nat_2324_overallmp"
+  # batch_size: 16
+  img_size: [224, 224]
+  num_workers: 0
+  seed: 1234
+  temporal: True
+
+model:
+  name: temporal_resnet                # maps to GeoConvNativeRegressor via ModelRegistry
+  # params:
+  #   weights: "IMAGENET1K_V1"
+
+validator:
+  # epochs: 200
+  # lr: .00001
+  device: "cuda"
+  # save_every: 1
+  # eval_every: 1
+  # early_stop: null             # or {patience: 3, metric: "val_rmse"}

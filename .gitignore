@@ -2,3 +2,11 @@
 
 */__pycache__/*
 __pycache__
+job_files/
+job_files/
+
+# Slurm outputs
+slurm*.out
+slurm*.err
+*.out
+*.err
