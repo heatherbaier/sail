@@ -89,7 +89,7 @@ class SwinRegressor(BaseModelWrapper):
         # Keep your original calling convention: (image, coords)
         # Do NOT normalize or reorder coordinates here.
         out = self.net(batch["image"])#, batch["coords"])
-        return out
+        return out, None
 
     def compute_loss(self, pred, batch: Dict[str, Any]):
         # L1 regression by default; adjust if your training used MSE etc.

@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
+import math
 import re
 
 from ..core.base_dataset import BaseDatasetAdapter
@@ -203,28 +204,36 @@ class SimbaJSONDataset(Dataset):
         use_random_resized_crop: bool = False,  # set True only if changing FOV is OK
         validate: bool = False,
         ckpt_dir: Optional[str] = None,
+        new = True
     ):
         super().__init__()
         self.root = root_dir
         self.max_neighbors = max_neighbors
         self.ys = _load_json(ys_path)
+        self.ys = {k: v for k, v in self.ys.items() if not math.isnan(v)}
+
         print("NUM YS: ", len(self.ys), ys_path)
+
+        # print(list(self.ys.keys()))
+
+        # dasag
+
         self.coords = _load_json(coords_path)
-        self.dups_raw = _load_json(dup_path) if dup_path is not None else None
+        # self.dups_raw = _load_json(dup_path) if dup_path is not None else None
 
-        ys_keys = list(self.ys.keys())
+        # ys_keys = list(self.ys.keys())
 
-        coords_keys = list(self.coords.keys())
-        self.dups_index = _build_dups_index_by_basename(self.root, ys_keys, coords_keys, self.dups_raw)
+        # coords_keys = list(self.coords.keys())
+        # self.dups_index = _build_dups_index_by_basename(self.root, ys_keys, coords_keys, self.dups_raw)
         
-        # NEW: fallback if empty (handles your BF/PHL case where coords already has _1.._10)
-        if self.dups_index is not None and len(self.dups_index) == 0:
-            self.dups_index = _build_dups_from_coords(self.root, ys_keys, coords_keys)
+        # # NEW: fallback if empty (handles your BF/PHL case where coords already has _1.._10)
+        # if self.dups_index is not None and len(self.dups_index) == 0:
+        #     self.dups_index = _build_dups_from_coords(self.root, ys_keys, coords_keys)
         
         # intersect keys
         keys = set(self.ys) & set(self.coords)
-        if self.dups_index is not None:
-            keys &= set(self.dups_index)
+        # if self.dups_index is not None:
+        #     keys &= set(self.dups_index)
         self.items = sorted(keys)
 
         print(self.items[0:5])
@@ -236,34 +245,50 @@ class SimbaJSONDataset(Dataset):
         if len(self.items) == 0:
             raise ValueError(
                 "No overlapping base keys across ys/coords (and dups). "
-                f"ys={len(self.ys)} coords={len(self.coords)} dups={'None' if self.dups_index is None else len(self.dups_index)}\n"
+                # f"ys={len(self.ys)} coords={len(self.coords)} dups={'None' if self.dups_index is None else len(self.dups_index)}\n"
+                f"ys={len(self.ys)} coords={len(self.coords)}\n"
                 f"Example ys key: {next(iter(self.ys)) if self.ys else 'EMPTY'}\n"
                 f"Example coords key: {next(iter(self.coords)) if self.coords else 'EMPTY'}\n"
                 "Hint: We now fall back to grouping neighbors from coords by basename root "
                 "(clusterid_*.tiff). Ensure ys uses either clusterid_1.tiff or clusterid.tiff for the base."
             )
+        
         elif validate:
+            
             print("here in validate!!")
 
-            p = os.path.join(ckpt_dir, "test_indices.txt")
-            with open(p, "r") as f:
-                test_names = f.read().splitlines()
-                self.items = list(set(self.items) & set(test_names))
+            # If validating the validation set used in training
+            if not new:
 
-            print(len(self.items))
+                p = os.path.join(ckpt_dir, "test_indices.txt")
+                with open(p, "r") as f:
+                    test_names = f.read().splitlines()
+                    self.items = list(set(self.items) & set(test_names))
+    
+                print(len(self.items))
+
+            # If validating on another dataset
+            else:
+                # set the save path correctly (now it's rewriting)
+                pass
+
+
+             
 
         # -------------------------------
         # Transforms (train vs. val/test)
         # -------------------------------
         # Base resize or crop
         if train and augment:
+            print("IN TRAIN AND AUGMENT!!")
             resize_or_crop = (
                 transforms.RandomResizedCrop(
                     img_size, scale=(0.8, 1.0), ratio=(0.9, 1.1)
                 ) if use_random_resized_crop else transforms.Resize(img_size)
             )
             tf_list = [
-                resize_or_crop,
+                # resize_or_crop,
+                transforms.CenterCrop(size = 256),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
                 transforms.RandomRotation(degrees=20),  # small rotations, keep content
@@ -319,28 +344,28 @@ class SimbaJSONDataset(Dataset):
 
         out["image_name"] = img_path
     
-        if self.dups_index is not None:
-            neigh_full = self.dups_index.get(rel, [])[: self.max_neighbors]
-            n_imgs = []
-            for p in neigh_full:
-                p_use = p if os.path.isabs(p) else os.path.join(self.root, p)
-                if os.path.exists(p_use):
-                    n_imgs.append(self.tf(_ensure_rgb(p_use)))
-            n = len(n_imgs)
-            if n == 0:
-                pad = torch.zeros_like(img)
-                n_imgs = [pad for _ in range(self.max_neighbors)]
-                mask = torch.zeros(self.max_neighbors, dtype=torch.float32)
-            else:
-                pad = torch.zeros_like(n_imgs[0])
-                if n < self.max_neighbors:
-                    n_imgs += [pad for _ in range(self.max_neighbors - n)]
-                mask = torch.cat([
-                    torch.ones(n, dtype=torch.float32),
-                    torch.zeros(self.max_neighbors - n, dtype=torch.float32)
-                ])
-            out["neighbor_images"] = torch.stack(n_imgs, dim=0)
-            out["neighbor_mask"] = mask
+        # if self.dups_index is not None:
+        #     neigh_full = self.dups_index.get(rel, [])[: self.max_neighbors]
+        #     n_imgs = []
+        #     for p in neigh_full:
+        #         p_use = p if os.path.isabs(p) else os.path.join(self.root, p)
+        #         if os.path.exists(p_use):
+        #             n_imgs.append(self.tf(_ensure_rgb(p_use)))
+        #     n = len(n_imgs)
+        #     if n == 0:
+        #         pad = torch.zeros_like(img)
+        #         n_imgs = [pad for _ in range(self.max_neighbors)]
+        #         mask = torch.zeros(self.max_neighbors, dtype=torch.float32)
+        #     else:
+        #         pad = torch.zeros_like(n_imgs[0])
+        #         if n < self.max_neighbors:
+        #             n_imgs += [pad for _ in range(self.max_neighbors - n)]
+        #         mask = torch.cat([
+        #             torch.ones(n, dtype=torch.float32),
+        #             torch.zeros(self.max_neighbors - n, dtype=torch.float32)
+        #         ])
+        #     out["neighbor_images"] = torch.stack(n_imgs, dim=0)
+        #     out["neighbor_mask"] = mask
     
         return out
 

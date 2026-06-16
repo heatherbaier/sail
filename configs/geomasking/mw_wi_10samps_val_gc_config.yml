@@ -1,0 +1,21 @@
+# configs/phl_geoconv_regression.yaml
+task: validate        # "train", "validate", "explain", etc.
+
+experiment_name: "mw_wi_gc_10samps_v2"
+output_dir: "/data/hbaier/new_data/geomasking/mw/artifacts/"
+
+dataset:
+  type: json                   # maps to JSONGeoAdapter via DatasetRegistry
+  data_root: "/data/hbaier/new_data/geomasking/mw/imagery_10samps/"
+  prefix: "mw2016"
+  img_size: [256, 256]
+  num_workers: 0
+  seed: 1337
+  temporal: False
+  new: False
+  
+model:
+  name: geoconv                # maps to GeoConvNativeRegressor via ModelRegistry
+
+validator:
+  device: "cuda"

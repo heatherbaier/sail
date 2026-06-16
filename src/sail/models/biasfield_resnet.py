@@ -186,7 +186,7 @@ class BiasFieldResNetRegressor(BaseModelWrapper):
 
                 z = z_img + alpha * b                  # bias-field injection
                 out = self.final(z)                    # [B, num_outputs]
-                return out
+                return out, None
 
         self.net = _Net(resnet, img_head, coord_head, final_head,
                         self, alpha_param, alpha_const)

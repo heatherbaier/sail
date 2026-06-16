@@ -63,6 +63,9 @@ class CoordResNetRegressor(BaseModelWrapper):
         self.net: nn.Module | None = None
 
     def build(self) -> nn.Module:
+
+        print("HEY IM BUILDING HERE")
+        
         img_backbone, feat_dim = _get_resnet_backbone(self.backbone_name, self.pretrained)
 
         coord_head = nn.Sequential(
@@ -107,7 +110,8 @@ class CoordResNetRegressor(BaseModelWrapper):
 
     def forward(self, batch: Dict[str, Any]):
         # Ignore neighbors if present
-        return self.net(batch["image"], batch["coords"])
+        print("IM HEREEEEEEE")
+        return self.net(batch["image"], batch["coords"]), "HEY!!!!"
 
     def compute_loss(self, pred, batch: Dict[str, Any]):
         # Regression (L2). Targets can be [B] or [B,1].

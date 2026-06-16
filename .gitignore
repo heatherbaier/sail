@@ -10,3 +10,5 @@ slurm*.out
 slurm*.err
 *.out
 *.err
+*.ipynb
+

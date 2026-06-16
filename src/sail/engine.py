@@ -30,6 +30,9 @@ def load_config(path: str) -> dict:
 
 def run_training(cfg):
 
+    output_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
+    os.mkdir(output_dir)
+
     if cfg["model"]["name"] == "geoconv":
         print("geoconv!!")
         bs = 1
@@ -37,13 +40,11 @@ def run_training(cfg):
         bs = cfg["dataset"]["batch_size"]
 
     if cfg["dataset"]["temporal"]:
-        ds = build_temporal_dataset(cfg["dataset"], cfg, bs)
+        ds = build_temporal_dataset(cfg["dataset"], cfg, bs, output_dir)
     else:
-        ds = build_dataset(cfg["dataset"], cfg, bs)
+        ds = build_dataset(cfg["dataset"], cfg, bs, output_dir)
         
     model_wrapper, net, _ = build_model(cfg["model"])
-
-    # print(net)
 
     trainer = build_trainer(
         cfg_trainer = cfg["trainer"],
@@ -51,7 +52,7 @@ def run_training(cfg):
         dataset = ds,
         model_name = cfg["model"]["name"],
         batch_size = cfg["dataset"]["batch_size"],
-        ckpt_dir = cfg["output_dir"]
+        ckpt_dir = output_dir
     )
     trainer.fit()  # you already have Trainer.fit() in your CLI train path. :contentReference[oaicite:8]{index=8}
 
@@ -61,6 +62,8 @@ def run_training(cfg):
 
 
 def continue_training(cfg):
+
+    output_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
 
     # set batch size correctly
     if cfg["model"]["name"] == "geoconv":
@@ -75,7 +78,7 @@ def continue_training(cfg):
     else:
         ds = build_dataset(cfg["dataset"], cfg, bs)
         
-    model_wrapper, net, start_epoch = build_model(cfg["model"], cfg = cfg, continue_training = True)
+    model_wrapper, net, start_epoch = build_model(cfg["model"], cfg = cfg, continue_training = True, ckpt_dir = output_dir)
 
     # print(net)
 
@@ -85,7 +88,7 @@ def continue_training(cfg):
         dataset = ds,
         model_name = cfg["model"]["name"],
         batch_size = cfg["dataset"]["batch_size"],
-        ckpt_dir = cfg["output_dir"],
+        ckpt_dir = output_dir,
         start_epoch = start_epoch
     )
     trainer.fit()  # you already have Trainer.fit() in your CLI train path. :contentReference[oaicite:8]{index=8}
@@ -135,16 +138,16 @@ def unpack_outputs(out):
 
 def run_validation(cfg):
     
-    ckpt_dir = cfg["output_dir"]#.get("ckpt_dir", cfg["output_dir"])
+    ckpt_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
     device = cfg["validator"]["device"]
     
     # ds = build_validation_dataset(cfg["dataset"], cfg)
 
     if cfg["dataset"]["temporal"]:
-        ds = build_validation_dataset(cfg["dataset"], cfg, temporal = True)
+        ds = build_validation_dataset(cfg["dataset"], cfg, ckpt_dir, temporal = True)
         # ds = ds.test_loader()
     else:
-        ds = build_validation_dataset(cfg["dataset"], cfg, temporal = False)
+        ds = build_validation_dataset(cfg["dataset"], cfg, ckpt_dir, temporal = False)
 
     
     

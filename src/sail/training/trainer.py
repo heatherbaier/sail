@@ -34,7 +34,7 @@ class Trainer:
 
     def fit(self) -> None:
 
-        print(self.net.conv1.hypernet.fc1.weight)
+        # print(self.net.conv1.hypernet.fc1.weight)
 
         # adga
 
@@ -59,11 +59,26 @@ class Trainer:
                 
                 batch = {k: (v.to(self.cfg.device) if hasattr(v, "to") else v) for k,v in batch.items()}
 
+                # print(batch["image"])
+                print(batch["coords"])
+                print(batch["label"])
+
+                                
                 # print(batch["image"].shape)
 
                 # with torch.cuda.amp.autocast(enabled=self.cfg.amp):
-                pred, _ = self.mw.forward(batch)                
+                print(self.mw.forward(batch)  )
+                pred, _ = self.mw.forward(batch)       
+
+                print("pred: ", pred)
+
+                
                 loss = self.mw.compute_loss(pred, batch)
+
+                print("loss: ", loss, "\n\n")
+
+                # jadal
+                
                 loss.backward()
 
                 if self.model_name == "geoconv":

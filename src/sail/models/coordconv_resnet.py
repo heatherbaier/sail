@@ -199,7 +199,7 @@ class CoordConvResNetRegressor(BaseModelWrapper):
         return self.net
 
     def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
-        return self.net(batch["image"], batch["coords"])
+        return self.net(batch["image"], batch["coords"]), None
 
     def compute_loss(self, pred: torch.Tensor, batch: Dict[str, Any]) -> torch.Tensor:
         target = batch["label"].float().view(pred.size(0), -1)

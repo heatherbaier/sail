@@ -29,7 +29,7 @@ def highest_epoch(dir_path=".", max_epoch=None):
 
 
 
-def build_validation_dataset(cfg_dataset: dict, cfg: dict, temporal: bool = False):
+def build_validation_dataset(cfg_dataset: dict, cfg: dict, ckpt_dir: str, temporal: bool = False):
 
     from ..data.adapters import JSONGeoAdapter, resolve_json_paths
 
@@ -44,10 +44,7 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, temporal: bool = Fals
         print("TEMPORAL")
         ds = TemporalSchoolDataset(
             json_path = ys_path,
-            img_dir = cfg["output_dir"],
-            # coords_path = coords_path,
-            # dup_path = dup_path,
-            # ckpt_dir = cfg["output_dir"],
+            img_dir = ckpt_dir,
             validate = True,
         )
         
@@ -60,26 +57,16 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, temporal: bool = Fals
             ys_path = ys_path,
             coords_path = coords_path,
             dup_path = dup_path,
-            ckpt_dir = cfg["output_dir"],
+            ckpt_dir = ckpt_dir,
             validate = True,
+            new = cfg_dataset.get("new", False),
         )
-
-    # ds = JSONGeoAdapter(
-    #     root_dir=cfg_dataset["data_root"],
-    #     ys_path=ys_path,
-    #     coords_path=coords_path,
-    #     dup_path=dup_path,
-    #     batch_size=cfg_dataset["batch_size"],
-    #     img_size=tuple(cfg_dataset.get("img_size", [224, 224])),
-    #     num_workers=cfg_dataset.get("num_workers", 0),
-    #     ckpt_dir = cfg["output_dir"],
-    # )
 
     return ds
 
 
 
-def build_temporal_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
+def build_temporal_dataset(cfg_dataset: dict, cfg: dict, batch_size: int, ckpt_dir: str):
 
     print(cfg)
 
@@ -96,7 +83,7 @@ def build_temporal_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
         batch_size = batch_size,
         img_size=tuple(cfg_dataset.get("img_size", (256, 256))),
         num_workers=cfg_dataset.get("num_workers", 0),
-        ckpt_dir = cfg["output_dir"],
+        ckpt_dir = ckpt_dir
     )
 
     return ds
@@ -105,7 +92,7 @@ def build_temporal_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
 
     
 
-def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
+def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int, ckpt_dir: str):
 
     ys_path, coords_path, dup_path = resolve_json_paths(
         data_root=cfg_dataset["data_root"],
@@ -121,7 +108,7 @@ def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
         batch_size = batch_size,
         img_size=tuple(cfg_dataset.get("img_size", [224, 224])),
         num_workers = cfg_dataset.get("num_workers", 0),
-        ckpt_dir = cfg["output_dir"],
+        ckpt_dir = ckpt_dir,
         seed = cfg_dataset.get("seed", 1337),
         write_files = cfg_dataset.get("write_files", True),
     )
@@ -129,16 +116,15 @@ def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int):
     return ds
 
 
-def build_model(cfg_model: dict, cfg = None, continue_training = False):
+def build_model(cfg_model: dict, cfg = None, continue_training = False, ckpt_dir = None):
+
     name = cfg_model["name"]
     params = cfg_model.get("params", {})
     model_wrapper_cls = ModelRegistry.get(name)
     print(params)
     
-    
-
     if continue_training:
-        epoch, path = highest_epoch(cfg["output_dir"])
+        epoch, path = highest_epoch(ckpt_dir)
         print("continue_training: ", continue_training, path)
         model_wrapper = model_wrapper_cls(**params)
         model_wrapper.load(path)
