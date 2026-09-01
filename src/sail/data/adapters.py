@@ -201,6 +201,97 @@ def _load_tiff_tensor(path: str, scale_divisor: float) -> torch.Tensor:
     return torch.from_numpy(arr) / scale_divisor
 
 
+def _compute_tiff_band_stats(
+    paths: List[str],
+    scale_divisor: float,
+    sample_size: int = 200,
+    seed: int = 1337,
+) -> Tuple[Optional[List[float]], Optional[List[float]]]:
+    """
+    Auto-compute per-band normalization stats from a random sample of
+    TIFF chips, instead of requiring them precomputed offline. Cheap next
+    to an actual training run (a few hundred small chip reads, once) --
+    see _resolve_or_compute_band_stats for how this gets shared/cached
+    across a dataset's train/val/test splits instead of run per-split.
+
+    Returns (None, None) if `paths` is empty (e.g. a pure-PNG dataset).
+    """
+    if not paths:
+        return None, None
+
+    rng = random.Random(seed)
+    sample = paths if len(paths) <= sample_size else rng.sample(paths, sample_size)
+
+    n_bands = None
+    total = total_sq = count = None  # per-band accumulators
+
+    for p in sample:
+        with rasterio.open(p) as src:
+            arr = src.read().astype("float64") / scale_divisor  # (C, H, W)
+        if n_bands is None:
+            n_bands = arr.shape[0]
+            total = np.zeros(n_bands)
+            total_sq = np.zeros(n_bands)
+            count = np.zeros(n_bands)
+        for b in range(n_bands):
+            valid = arr[b][arr[b] > 0]  # 0 = nodata, matches geoetl's convention
+            total[b] += valid.sum()
+            total_sq[b] += (valid ** 2).sum()
+            count[b] += valid.size
+
+    count = np.maximum(count, 1)  # avoid div-by-zero for a degenerate/all-nodata band
+    mean = total / count
+    var = np.maximum(total_sq / count - mean ** 2, 1e-8)  # numerical floor
+    std = np.sqrt(var)
+    print(f"Computed TIFF band stats from {len(sample)} sampled chips "
+          f"({n_bands} bands): mean={mean.round(4).tolist()} std={std.round(4).tolist()}")
+    return mean.tolist(), std.tolist()
+
+
+def _resolve_or_compute_band_stats(
+    tiff_paths: List[str],
+    scale_divisor: float,
+    ckpt_dir: Optional[str],
+    sample_size: int = 200,
+    seed: int = 1337,
+) -> Tuple[Optional[List[float]], Optional[List[float]]]:
+    """
+    Return (band_mean, band_std) for a TIFF dataset, computing them only
+    once and reusing that value everywhere after -- critical because
+    JSONGeoAdapter builds separate SimbaJSONDataset instances for
+    train/val/test (and a `full` one to compute the split itself); each
+    independently auto-computing stats from its own item subset would
+    give the model slightly different normalization for train vs. val,
+    which would be a real (silent) bug. Whichever of those instances gets
+    constructed first computes and caches to
+    <ckpt_dir>/band_stats.json; the rest just load that file.
+
+    This also makes evaluation reuse the exact stats a checkpoint was
+    trained with (rather than recomputing from whatever data you're now
+    evaluating on) whenever ckpt_dir already has a cached file -- which is
+    what you want even when validating on a different dataset than the
+    one trained on, since the model's weights were tuned for that specific
+    input distribution.
+    """
+    cache_path = os.path.join(ckpt_dir, "band_stats.json") if ckpt_dir else None
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached = json.load(f)
+        print(f"Loaded cached TIFF band stats from {cache_path}")
+        return cached["band_mean"], cached["band_std"]
+
+    mean, std = _compute_tiff_band_stats(tiff_paths, scale_divisor, sample_size=sample_size, seed=seed)
+
+    if cache_path and mean is not None:
+        os.makedirs(ckpt_dir, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump({"band_mean": mean, "band_std": std,
+                       "n_sampled": min(sample_size, len(tiff_paths))}, f, indent=2)
+        print(f"Cached TIFF band stats to {cache_path}")
+
+    return mean, std
+
+
 def _adjust_contrast_nd(img: torch.Tensor, factor: float) -> torch.Tensor:
     """
     Contrast adjustment that works for any number of channels.
@@ -342,11 +433,20 @@ class SimbaJSONDataset(Dataset):
         # NEW: multiband TIFF support. Only consulted for items whose path
         # ends in .tif/.tiff -- PNG/JPEG items keep using the pipeline
         # above unchanged. See _TiffAugment for why these can't share
-        # ImageNet's mean/std or ColorJitter's saturation/hue.
+        # ImageNet's mean/std or ColorJitter's saturation/hue. Leave
+        # band_mean/band_std as None to auto-compute them from a sample
+        # of this dataset's own tiff chips instead of supplying them by
+        # hand -- see _resolve_or_compute_band_stats.
         band_mean: Optional[List[float]] = None,
         band_std: Optional[List[float]] = None,
         tif_scale_divisor: float = 10000.0,
+        band_stats_sample_size: int = 200,
     ):
+        if (band_mean is None) != (band_std is None):
+            raise ValueError(
+                "band_mean and band_std must be given together, or both "
+                "left as None to auto-compute them -- got only one."
+            )
         super().__init__()
         self.root = root_dir
         self.max_neighbors = max_neighbors
@@ -453,6 +553,14 @@ class SimbaJSONDataset(Dataset):
         self.tf = transforms.Compose(tf_list)
 
         self.tif_scale_divisor = tif_scale_divisor
+        if normalize and band_mean is None:
+            tiff_paths = [
+                p if os.path.isabs(p) else os.path.join(self.root, p)
+                for p in self.items if _is_tiff(p)
+            ]
+            band_mean, band_std = _resolve_or_compute_band_stats(
+                tiff_paths, tif_scale_divisor, ckpt_dir, sample_size=band_stats_sample_size, seed=seed,
+            )
         self.tf_tiff = _TiffAugment(
             img_size=img_size,
             train=train,
@@ -547,13 +655,22 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         band_mean: Optional[List[float]] = None,
         band_std: Optional[List[float]] = None,
         tif_scale_divisor: float = 10000.0,
+        band_stats_sample_size: int = 200,
     ):
-        # Build an index over the full set to split once
+        # Build an index over the full set to split once. Constructed
+        # first, so if band_mean/band_std aren't given, this is the
+        # instance that actually auto-computes them (from the full,
+        # pre-split item set) and caches to ckpt_dir/band_stats.json --
+        # _train/_val/_test below just load that cache rather than each
+        # recomputing their own from their own split. See
+        # _resolve_or_compute_band_stats for why that sharing matters.
         full = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                 split_indices=None, max_neighbors=max_neighbors,
                                 img_size=img_size, normalize=normalize, seed=seed,
+                                ckpt_dir=ckpt_dir,
                                 band_mean=band_mean, band_std=band_std,
-                                tif_scale_divisor=tif_scale_divisor)
+                                tif_scale_divisor=tif_scale_divisor,
+                                band_stats_sample_size=band_stats_sample_size)
         n = len(full)
         idxs = list(range(n))
         # idxs = list(range(52))
@@ -569,18 +686,24 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         self._train = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=train_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
+                                       ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor)
+                                       tif_scale_divisor=tif_scale_divisor,
+                                       band_stats_sample_size=band_stats_sample_size)
         self._val   = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=val_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
+                                       ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor)
+                                       tif_scale_divisor=tif_scale_divisor,
+                                       band_stats_sample_size=band_stats_sample_size)
         self._test  = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=test_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
+                                       ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor)
+                                       tif_scale_divisor=tif_scale_divisor,
+                                       band_stats_sample_size=band_stats_sample_size)
 
         print("Seed: ", seed)
         print("Write Files: ", write_files)
