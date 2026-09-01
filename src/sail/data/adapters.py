@@ -309,6 +309,22 @@ def _adjust_contrast_nd(img: torch.Tensor, factor: float) -> torch.Tensor:
     return mean + factor * (img - mean)
 
 
+def _adjust_brightness_nd(img: torch.Tensor, factor: float) -> torch.Tensor:
+    """
+    Brightness adjustment that works for any number of channels.
+
+    TF.adjust_brightness ALSO only supports 1 or 3 channels -- it was
+    wrongly assumed safe here (unlike adjust_contrast, its actual
+    definition -- blend toward zero, i.e. a plain scalar multiply -- has
+    no real channel-count dependency), and that assumption broke a real
+    12-band training run with the same _assert_channels TypeError as
+    adjust_contrast. Fixed the same way: reimplemented without the
+    assertion. img * factor, unclamped, same reasoning as
+    _adjust_contrast_nd above.
+    """
+    return img * factor
+
+
 class _TiffAugment:
     """
     Tensor-native augmentation pipeline for multiband TIFF chips. Mirrors
@@ -320,7 +336,11 @@ class _TiffAugment:
         (they convert to HSV) and aren't well-defined for arbitrary band
         counts, so they're dropped rather than silently doing something
         wrong on, say, a 5-band NIR+SWIR chip. Brightness/contrast are
-        kept (generalize fine -- see _adjust_contrast_nd above).
+        kept, via _adjust_brightness_nd/_adjust_contrast_nd above rather
+        than TF.adjust_brightness/adjust_contrast -- both of the latter
+        assert 1-or-3 channels despite neither's actual definition
+        depending on channel count, which cost a real training run before
+        being caught.
       - Normalization uses per-band mean/std (band_mean/band_std) instead
         of ImageNet RGB stats, since those obviously don't apply here.
         Pass both or neither; if normalize was requested but no stats
@@ -366,7 +386,7 @@ class _TiffAugment:
             if random.random() < 0.5:
                 img = TF.vflip(img)
             img = TF.rotate(img, random.uniform(-20, 20))
-            img = TF.adjust_brightness(img, 1.0 + random.uniform(-0.2, 0.2))
+            img = _adjust_brightness_nd(img, 1.0 + random.uniform(-0.2, 0.2))
             img = _adjust_contrast_nd(img, 1.0 + random.uniform(-0.2, 0.2))
             if random.random() < 0.2:
                 img = TF.gaussian_blur(img, kernel_size=3, sigma=random.uniform(0.1, 1.5))
