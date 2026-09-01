@@ -60,6 +60,9 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, ckpt_dir: str, tempor
             ckpt_dir = ckpt_dir,
             validate = True,
             new = cfg_dataset.get("new", False),
+            band_mean = cfg_dataset.get("band_mean"),
+            band_std = cfg_dataset.get("band_std"),
+            tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
         )
 
     return ds
@@ -111,6 +114,9 @@ def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int, ckpt_dir: str):
         ckpt_dir = ckpt_dir,
         seed = cfg_dataset.get("seed", 1337),
         write_files = cfg_dataset.get("write_files", True),
+        band_mean = cfg_dataset.get("band_mean"),
+        band_std = cfg_dataset.get("band_std"),
+        tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
     )
 
     return ds
