@@ -63,6 +63,7 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, ckpt_dir: str, tempor
             band_mean = cfg_dataset.get("band_mean"),
             band_std = cfg_dataset.get("band_std"),
             tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
+            band_stats_sample_size = cfg_dataset.get("band_stats_sample_size", 200),
         )
 
     return ds
@@ -117,6 +118,7 @@ def build_dataset(cfg_dataset: dict, cfg: dict, batch_size: int, ckpt_dir: str):
         band_mean = cfg_dataset.get("band_mean"),
         band_std = cfg_dataset.get("band_std"),
         tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
+        band_stats_sample_size = cfg_dataset.get("band_stats_sample_size", 200),
     )
 
     return ds
