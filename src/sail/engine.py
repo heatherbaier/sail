@@ -149,6 +149,11 @@ def run_validation(cfg):
     else:
         ds = build_validation_dataset(cfg["dataset"], cfg, ckpt_dir, temporal = False)
 
+
+    if cfg["dataset"]["new"]:
+        append = "full"
+    else:
+        append = "valset"
     
     
     model_wrapper, net, _ = build_model(cfg["model"])
@@ -182,15 +187,15 @@ def run_validation(cfg):
             # if extras[0] is not None:
                 # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
                 
-            df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))
+            df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_{append}_preds.csv"))  
 
     df = pd.DataFrame()
     df["name"], df["pred"], df["label"], df["extra"] = imnames, preds, labels, all_extras
     
     # if extras[0] is not None:
         # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
-        
-    df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_preds.csv"))  
+    
+    df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_{append}_preds.csv"))  
 
     # metrics = loops.validate_loop(
     #     model_wrapper,
