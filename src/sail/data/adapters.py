@@ -2,9 +2,12 @@ from __future__ import annotations
 import os, json, random
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import rasterio
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+import torchvision.transforms.functional as TF
 from PIL import Image
 import math
 import re
@@ -164,6 +167,137 @@ def _ensure_rgb(path: str) -> Image.Image:
         img = img.convert("RGB")
     return img
 
+
+# ---------- multiband TIFF support ----------
+#
+# PIL images can't represent more than ~4 bands (its modes top out around
+# RGBA/CMYK), so multiband GeoTIFF chips (e.g. from geoetl's MPC pipeline,
+# which can carry NIR/SWIR/red-edge alongside RGB) can't go through the
+# PIL-based `_ensure_rgb` + torchvision v1 `transforms.Compose` pipeline
+# below at all -- that pipeline stays exactly as-is and is only used for
+# non-tiff images (PNG/JPEG from older 3-band projects), so existing
+# configs/checkpoints keep behaving identically. TIFFs get a parallel,
+# tensor-native pipeline instead.
+
+_TIFF_EXTS = {".tif", ".tiff"}
+
+
+def _is_tiff(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _TIFF_EXTS
+
+
+def _load_tiff_tensor(path: str, scale_divisor: float) -> torch.Tensor:
+    """
+    Read a (possibly multiband) GeoTIFF chip into a (C,H,W) float32 tensor.
+
+    geoetl's MPC pipeline writes chips as uint16 "reflectance x 10000"
+    (see geoetl/io/mpc.py _build_composite, scale_divisor default matches
+    that convention) -- dividing back out puts pixel values on an
+    approximate [0,1] reflectance scale, the same numeric range ToTensor()
+    produces for 8-bit PNG/JPEG chips in the legacy path below.
+    """
+    with rasterio.open(path) as src:
+        arr = src.read().astype("float32")  # (C, H, W)
+    return torch.from_numpy(arr) / scale_divisor
+
+
+def _adjust_contrast_nd(img: torch.Tensor, factor: float) -> torch.Tensor:
+    """
+    Contrast adjustment that works for any number of channels.
+
+    torchvision's TF.adjust_contrast only supports 1 or 3 channels (it
+    raises TypeError for anything else, since it tries to compute a
+    grayscale reference), so it can't be reused directly for N-band
+    imagery. This is the same blend-toward-mean definition, generalized:
+    mean + factor * (img - mean), with the mean taken over the whole
+    image (not clamped -- tif reflectance values aren't guaranteed to sit
+    in [0,1], unlike 8-bit-derived tensors, so clamping there would be
+    wrong).
+    """
+    mean = img.mean(dim=(-3, -2, -1), keepdim=True)
+    return mean + factor * (img - mean)
+
+
+class _TiffAugment:
+    """
+    Tensor-native augmentation pipeline for multiband TIFF chips. Mirrors
+    the geometric/blur/erasing steps of SimbaJSONDataset's PNG pipeline as
+    closely as a tensor-first pipeline reasonably can, with two deliberate
+    differences:
+
+      - No saturation/hue jitter: those are RGB-color-space operations
+        (they convert to HSV) and aren't well-defined for arbitrary band
+        counts, so they're dropped rather than silently doing something
+        wrong on, say, a 5-band NIR+SWIR chip. Brightness/contrast are
+        kept (generalize fine -- see _adjust_contrast_nd above).
+      - Normalization uses per-band mean/std (band_mean/band_std) instead
+        of ImageNet RGB stats, since those obviously don't apply here.
+        Pass both or neither; if normalize was requested but no stats
+        were given, this raises rather than guessing.
+
+    Also mirrors one existing quirk from the PNG train pipeline rather
+    than "fixing" it here: CenterCrop uses a hardcoded 256 regardless of
+    img_size (img_size is only actually used by the eval/Resize path) --
+    same as the original transforms.Compose list, where `resize_or_crop`
+    is computed but never added to tf_list.
+    """
+
+    TRAIN_CENTER_CROP = 256
+
+    def __init__(
+        self,
+        img_size: Tuple[int, int],
+        train: bool,
+        augment: bool,
+        normalize: bool,
+        band_mean: Optional[List[float]] = None,
+        band_std: Optional[List[float]] = None,
+    ):
+        self.img_size = img_size
+        self.train = train and augment
+        # NOT checked eagerly here: this object is constructed for every
+        # dataset regardless of whether it ever actually loads a tiff (a
+        # pure-PNG project never calls __call__ on it), and normalize
+        # defaults to True -- raising in __init__ would break every
+        # existing PNG-only config that doesn't pass band stats. The check
+        # happens in __call__ instead, where it's only reached once a
+        # tiff item is actually being loaded.
+        self.band_mean = band_mean
+        self.band_std = band_std
+        self.normalize = normalize
+        self._erase = transforms.RandomErasing(p=0.25, scale=(0.02, 0.08), ratio=(0.3, 3.3))
+
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
+        if self.train:
+            img = TF.center_crop(img, [self.TRAIN_CENTER_CROP, self.TRAIN_CENTER_CROP])
+            if random.random() < 0.5:
+                img = TF.hflip(img)
+            if random.random() < 0.5:
+                img = TF.vflip(img)
+            img = TF.rotate(img, random.uniform(-20, 20))
+            img = TF.adjust_brightness(img, 1.0 + random.uniform(-0.2, 0.2))
+            img = _adjust_contrast_nd(img, 1.0 + random.uniform(-0.2, 0.2))
+            if random.random() < 0.2:
+                img = TF.gaussian_blur(img, kernel_size=3, sigma=random.uniform(0.1, 1.5))
+        else:
+            img = TF.resize(img, list(self.img_size))
+
+        if self.normalize:
+            if self.band_mean is None or self.band_std is None:
+                raise ValueError(
+                    "normalize=True but this dataset has no band_mean/"
+                    "band_std -- there's no generic default the way "
+                    "ImageNet RGB stats are for 3-band photos. Pass "
+                    "dataset.band_mean / dataset.band_std (one value per "
+                    "band) in the config for a TIFF dataset."
+                )
+            img = TF.normalize(img, mean=self.band_mean, std=self.band_std)
+
+        if self.train:
+            img = self._erase(img)
+
+        return img
+
 def resolve_json_paths(data_root: str, prefix: str, with_neighbors: bool = True):
     ys = os.path.join(data_root, f"{prefix}_ys.json")
     coords = os.path.join(data_root, f"{prefix}_coords.json")
@@ -204,7 +338,14 @@ class SimbaJSONDataset(Dataset):
         use_random_resized_crop: bool = False,  # set True only if changing FOV is OK
         validate: bool = False,
         ckpt_dir: Optional[str] = None,
-        new = True
+        new = True,
+        # NEW: multiband TIFF support. Only consulted for items whose path
+        # ends in .tif/.tiff -- PNG/JPEG items keep using the pipeline
+        # above unchanged. See _TiffAugment for why these can't share
+        # ImageNet's mean/std or ColorJitter's saturation/hue.
+        band_mean: Optional[List[float]] = None,
+        band_std: Optional[List[float]] = None,
+        tif_scale_divisor: float = 10000.0,
     ):
         super().__init__()
         self.root = root_dir
@@ -311,6 +452,16 @@ class SimbaJSONDataset(Dataset):
 
         self.tf = transforms.Compose(tf_list)
 
+        self.tif_scale_divisor = tif_scale_divisor
+        self.tf_tiff = _TiffAugment(
+            img_size=img_size,
+            train=train,
+            augment=augment,
+            normalize=normalize,
+            band_mean=band_mean,
+            band_std=band_std,
+        )
+
         if split_indices is not None:
             self.items = [self.items[i] for i in split_indices]
 
@@ -328,8 +479,11 @@ class SimbaJSONDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         rel = self.items[idx]
         img_path = rel if os.path.isabs(rel) else os.path.join(self.root, rel)
-        img = self.tf(_ensure_rgb(img_path))
-            
+        if _is_tiff(img_path):
+            img = self.tf_tiff(_load_tiff_tensor(img_path, self.tif_scale_divisor))
+        else:
+            img = self.tf(_ensure_rgb(img_path))
+
         lon, lat = self.coords[rel]
         coords = torch.tensor([float(lat), float(lon)], dtype=torch.float32)
     
@@ -387,12 +541,19 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         shuffle_train: bool = True,
         num_workers: int = 0,
         seed: int = 1337, # need to handle if input is None I think
-        write_files = True
+        write_files = True,
+        # NEW: multiband TIFF support -- see SimbaJSONDataset/_TiffAugment.
+        # No-ops for PNG/JPEG-only datasets.
+        band_mean: Optional[List[float]] = None,
+        band_std: Optional[List[float]] = None,
+        tif_scale_divisor: float = 10000.0,
     ):
         # Build an index over the full set to split once
         full = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                 split_indices=None, max_neighbors=max_neighbors,
-                                img_size=img_size, normalize=normalize, seed=seed)
+                                img_size=img_size, normalize=normalize, seed=seed,
+                                band_mean=band_mean, band_std=band_std,
+                                tif_scale_divisor=tif_scale_divisor)
         n = len(full)
         idxs = list(range(n))
         # idxs = list(range(52))
@@ -407,13 +568,19 @@ class JSONGeoAdapter(BaseDatasetAdapter):
 
         self._train = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=train_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed)
+                                       img_size=img_size, normalize=normalize, seed=seed,
+                                       band_mean=band_mean, band_std=band_std,
+                                       tif_scale_divisor=tif_scale_divisor)
         self._val   = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=val_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed)
+                                       img_size=img_size, normalize=normalize, seed=seed,
+                                       band_mean=band_mean, band_std=band_std,
+                                       tif_scale_divisor=tif_scale_divisor)
         self._test  = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=test_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed)
+                                       img_size=img_size, normalize=normalize, seed=seed,
+                                       band_mean=band_mean, band_std=band_std,
+                                       tif_scale_divisor=tif_scale_divisor)
 
         print("Seed: ", seed)
         print("Write Files: ", write_files)
