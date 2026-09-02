@@ -60,6 +60,14 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, ckpt_dir: str, tempor
             ckpt_dir = ckpt_dir,
             validate = True,
             new = cfg_dataset.get("new", False),
+            # Validation must use the deterministic eval transform (resize
+            # + normalize only), not the training augmentation pipeline --
+            # train/augment previously defaulted to True here (unset), so
+            # predictions were being computed on randomly cropped/flipped/
+            # rotated/jittered/blurred/erased images instead, making
+            # validation metrics noisy and non-reproducible run-to-run.
+            train = False,
+            augment = False,
             band_mean = cfg_dataset.get("band_mean"),
             band_std = cfg_dataset.get("band_std"),
             tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
