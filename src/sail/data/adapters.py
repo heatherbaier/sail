@@ -710,9 +710,18 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
                                        band_stats_sample_size=band_stats_sample_size)
+        # train=False/augment=False: val and test must use the
+        # deterministic eval transform (resize + normalize only), not the
+        # training augmentation pipeline. Both previously defaulted to
+        # True (unset here), so the val_loss Trainer.fit() reports and
+        # logs every epoch -- and would use for early stopping -- was
+        # being computed on randomly cropped/flipped/rotated/jittered/
+        # blurred/erased images instead of a stable, comparable eval
+        # signal.
         self._val   = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=val_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
+                                       train=False, augment=False,
                                        ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
@@ -720,6 +729,7 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         self._test  = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=test_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
+                                       train=False, augment=False,
                                        ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
