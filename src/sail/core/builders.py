@@ -68,6 +68,11 @@ def build_validation_dataset(cfg_dataset: dict, cfg: dict, ckpt_dir: str, tempor
             # validation metrics noisy and non-reproducible run-to-run.
             train = False,
             augment = False,
+            # Also previously unset here, silently defaulting to (224,224)
+            # regardless of what img_size training actually used (e.g. AZ
+            # configs use [256, 256]) -- the eval Resize() target now
+            # matches, same as build_dataset's JSONGeoAdapter call below.
+            img_size = tuple(cfg_dataset.get("img_size", [224, 224])),
             band_mean = cfg_dataset.get("band_mean"),
             band_std = cfg_dataset.get("band_std"),
             tif_scale_divisor = cfg_dataset.get("tif_scale_divisor", 10000.0),
