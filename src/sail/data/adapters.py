@@ -682,6 +682,22 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         img_size: Tuple[int,int] = (224,224),
         normalize: bool = True,
         split: Tuple[float,float,float] = (0.8, 0.1, 0.1),
+        # "random": original behavior -- shuffle a plain index range and
+        # slice it. Depends on dataset size/order, so it is NOT stable
+        # across two datasets built from different (even overlapping)
+        # item sets -- e.g. one dataset per quarter, where a location's
+        # chip is sometimes missing. Kept as the default so existing
+        # configs/checkpoints keep behaving identically.
+        # "stable": each item's bucket is a seeded hash of its own
+        # identity (see data/splitting.py), independent of what else is
+        # in the dataset -- the same location gets the same train/val/test
+        # assignment across every dataset built with the same seed/split,
+        # which is required if you're going to compare validation metrics
+        # across those datasets (e.g. per-quarter accuracy/bias). Combine
+        # with spatial_block_deg to also avoid spatial-autocorrelation
+        # leakage between train and val.
+        split_strategy: str = "random",
+        spatial_block_deg: Optional[float] = None,
         shuffle_train: bool = True,
         num_workers: int = 0,
         seed: int = 1337, # need to handle if input is None I think
@@ -708,16 +724,27 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                 tif_scale_divisor=tif_scale_divisor,
                                 band_stats_sample_size=band_stats_sample_size)
         n = len(full)
-        idxs = list(range(n))
-        # idxs = list(range(52))
-        random.Random(seed).shuffle(idxs)
-        n_train = int(split[0]*n)
-        n_val   = int(split[1]*n)
-        # n_train = 32
-        # n_val = 20
-        train_idx = idxs[:n_train]
-        val_idx   = idxs[n_train:n_train+n_val]
-        test_idx  = idxs[n_train+n_val:]
+        if split_strategy == "random":
+            idxs = list(range(n))
+            random.Random(seed).shuffle(idxs)
+            n_train = int(split[0]*n)
+            n_val   = int(split[1]*n)
+            train_idx = idxs[:n_train]
+            val_idx   = idxs[n_train:n_train+n_val]
+            test_idx  = idxs[n_train+n_val:]
+        elif split_strategy == "stable":
+            from .splitting import compute_stable_split
+            buckets = compute_stable_split(full.items, full.coords, seed, split, spatial_block_deg)
+            train_idx, val_idx, test_idx = [], [], []
+            for i, it in enumerate(full.items):
+                bucket = buckets[it]
+                (train_idx if bucket == "train" else
+                 val_idx if bucket == "val" else test_idx).append(i)
+            realized = tuple(round(len(x) / n, 3) for x in (train_idx, val_idx, test_idx)) if n else (0, 0, 0)
+            block_note = f", spatial_block_deg={spatial_block_deg}" if spatial_block_deg else ""
+            print(f"[stable split] requested {split}, realized {realized} over n={n} items{block_note}")
+        else:
+            raise ValueError(f"Unknown split_strategy={split_strategy!r}; expected 'random' or 'stable'")
 
         self._train = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=train_idx, max_neighbors=max_neighbors,
