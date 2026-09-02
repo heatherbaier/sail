@@ -292,6 +292,116 @@ def _resolve_or_compute_band_stats(
     return mean, std
 
 
+# ---------- auto-computed PNG/JPEG normalization stats ----------
+#
+# Deliberately separate functions/cache file from the TIFF ones above,
+# rather than refactored to share code with them, even though the
+# accumulation logic is nearly identical: an existing training run's
+# cached <ckpt_dir>/band_stats.json (TIFF) is depended on as-is by
+# _resolve_or_compute_band_stats's exact schema, and this shouldn't risk
+# changing that.
+
+def _load_png_array(path: str) -> np.ndarray:
+    """
+    PIL-decode a PNG/JPEG chip into a (3,H,W) float64 array scaled to
+    [0,1] -- the same numeric range ToTensor() produces, since Normalize()
+    is applied after ToTensor() in the pipeline below.
+    """
+    arr = np.asarray(_ensure_rgb(path), dtype="float64") / 255.0  # (H, W, 3)
+    return arr.transpose(2, 0, 1)  # (3, H, W)
+
+
+def _compute_png_band_stats(
+    paths: List[str],
+    sample_size: int = 200,
+    seed: int = 1337,
+) -> Tuple[Optional[List[float]], Optional[List[float]]]:
+    """
+    Auto-compute per-channel RGB normalization stats from a random sample
+    of PNG/JPEG chips, the same idea as _compute_tiff_band_stats: measured
+    from this dataset's own imagery instead of reusing the hardcoded
+    ImageNet RGB stats (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
+    when dataset.compute_png_stats is set. 0 is treated as nodata (matches
+    geoetl's PNG output, which also fillna(0)s masked pixels), same
+    convention as the TIFF path.
+
+    Returns (None, None) if `paths` is empty (e.g. a pure-TIFF dataset).
+    """
+    if not paths:
+        return None, None
+
+    rng = random.Random(seed)
+    sample = paths if len(paths) <= sample_size else rng.sample(paths, sample_size)
+
+    n_bands = None
+    total = total_sq = count = None
+
+    for p in sample:
+        arr = _load_png_array(p)
+        if n_bands is None:
+            n_bands = arr.shape[0]
+            total = np.zeros(n_bands)
+            total_sq = np.zeros(n_bands)
+            count = np.zeros(n_bands)
+        for b in range(n_bands):
+            valid = arr[b][arr[b] > 0]  # 0 = nodata, matches geoetl's convention
+            total[b] += valid.sum()
+            total_sq[b] += (valid ** 2).sum()
+            count[b] += valid.size
+
+    count = np.maximum(count, 1)
+    mean = total / count
+    var = np.maximum(total_sq / count - mean ** 2, 1e-8)
+    std = np.sqrt(var)
+    print(f"Computed PNG band stats from {len(sample)} sampled chips "
+          f"({n_bands} channels): mean={mean.round(4).tolist()} std={std.round(4).tolist()}")
+    return mean.tolist(), std.tolist()
+
+
+def _resolve_or_compute_png_stats(
+    png_paths: List[str],
+    ckpt_dir: Optional[str],
+    sample_size: int = 200,
+    seed: int = 1337,
+) -> Tuple[List[float], List[float]]:
+    """
+    Same cache-once-and-share reasoning as _resolve_or_compute_band_stats
+    (see its docstring), for PNG/JPEG's per-channel RGB stats instead of
+    TIFF's per-band ones. Separate cache file (png_band_stats.json) --
+    the two are independent measurements of different data.
+
+    Unlike the TIFF resolver, this cannot return (None, None): it's only
+    called when dataset.compute_png_stats is explicitly set, at which
+    point Normalize() unconditionally needs a mean/std pair (whereas the
+    TIFF path's fallback-to-ImageNet-stats question doesn't exist here --
+    there IS no default for computed PNG stats to fall back to besides
+    the ImageNet ones the caller already has and uses when this isn't
+    requested at all).
+    """
+    cache_path = os.path.join(ckpt_dir, "png_band_stats.json") if ckpt_dir else None
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached = json.load(f)
+        print(f"Loaded cached PNG band stats from {cache_path}")
+        return cached["band_mean"], cached["band_std"]
+
+    mean, std = _compute_png_band_stats(png_paths, sample_size=sample_size, seed=seed)
+    if mean is None:
+        raise ValueError(
+            "dataset.compute_png_stats is set but this dataset has no "
+            "PNG/JPEG items to compute stats from."
+        )
+
+    if cache_path:
+        os.makedirs(ckpt_dir, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump({"band_mean": mean, "band_std": std,
+                       "n_sampled": min(sample_size, len(png_paths))}, f, indent=2)
+        print(f"Cached PNG band stats to {cache_path}")
+
+    return mean, std
+
+
 def _adjust_contrast_nd(img: torch.Tensor, factor: float) -> torch.Tensor:
     """
     Contrast adjustment that works for any number of channels.
@@ -468,6 +578,14 @@ class SimbaJSONDataset(Dataset):
         band_std: Optional[List[float]] = None,
         tif_scale_divisor: float = 10000.0,
         band_stats_sample_size: int = 200,
+        # NEW: opt-in auto-computed PNG/JPEG normalization stats, instead
+        # of the hardcoded ImageNet RGB stats below. Default False keeps
+        # every existing PNG config/checkpoint's behavior bit-for-bit
+        # unchanged -- an already-trained model expects ImageNet-stats-
+        # normalized input, so this can't default to True the way the
+        # TIFF path's auto-compute could (there was no prior TIFF
+        # behavior to preserve).
+        compute_png_stats: bool = False,
     ):
         if (band_mean is None) != (band_std is None):
             raise ValueError(
@@ -546,6 +664,17 @@ class SimbaJSONDataset(Dataset):
         # -------------------------------
         # Transforms (train vs. val/test)
         # -------------------------------
+        if compute_png_stats:
+            png_paths = [
+                p if os.path.isabs(p) else os.path.join(self.root, p)
+                for p in self.items if not _is_tiff(p)
+            ]
+            png_mean, png_std = _resolve_or_compute_png_stats(
+                png_paths, ckpt_dir, sample_size=band_stats_sample_size, seed=seed,
+            )
+        else:
+            png_mean, png_std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+
         # Base resize or crop
         if train and augment:
             print("IN TRAIN AND AUGMENT!!")
@@ -573,7 +702,7 @@ class SimbaJSONDataset(Dataset):
                 transforms.ToTensor(),
             ]
             if normalize:
-                tf_list.append(transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]))
+                tf_list.append(transforms.Normalize(mean=png_mean, std=png_std))
             # tensor-only erasing last
             tf_list.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.08), ratio=(0.3, 3.3)))
         else:
@@ -583,7 +712,7 @@ class SimbaJSONDataset(Dataset):
                 transforms.ToTensor(),
             ]
             if normalize:
-                tf_list.append(transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]))
+                tf_list.append(transforms.Normalize(mean=png_mean, std=png_std))
 
         self.tf = transforms.Compose(tf_list)
 
@@ -692,6 +821,7 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         band_std: Optional[List[float]] = None,
         tif_scale_divisor: float = 10000.0,
         band_stats_sample_size: int = 200,
+        compute_png_stats: bool = False,
     ):
         # Build an index over the full set to split once. Constructed
         # first, so if band_mean/band_std aren't given, this is the
@@ -706,7 +836,8 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                 ckpt_dir=ckpt_dir,
                                 band_mean=band_mean, band_std=band_std,
                                 tif_scale_divisor=tif_scale_divisor,
-                                band_stats_sample_size=band_stats_sample_size)
+                                band_stats_sample_size=band_stats_sample_size,
+                                compute_png_stats=compute_png_stats)
         n = len(full)
         idxs = list(range(n))
         # idxs = list(range(52))
@@ -725,7 +856,8 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                        ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size)
+                                       band_stats_sample_size=band_stats_sample_size,
+                                       compute_png_stats=compute_png_stats)
         # train=False/augment=False: val and test must use the
         # deterministic eval transform (resize + normalize only), not the
         # training augmentation pipeline. Both previously defaulted to
@@ -741,7 +873,8 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                        ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size)
+                                       band_stats_sample_size=band_stats_sample_size,
+                                       compute_png_stats=compute_png_stats)
         self._test  = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
                                        split_indices=test_idx, max_neighbors=max_neighbors,
                                        img_size=img_size, normalize=normalize, seed=seed,
@@ -749,7 +882,8 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                        ckpt_dir=ckpt_dir,
                                        band_mean=band_mean, band_std=band_std,
                                        tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size)
+                                       band_stats_sample_size=band_stats_sample_size,
+                                       compute_png_stats=compute_png_stats)
 
         print("Seed: ", seed)
         print("Write Files: ", write_files)
