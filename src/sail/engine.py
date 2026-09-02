@@ -209,6 +209,51 @@ def run_validation(cfg):
     # return metrics
 
 
+def run_band_importance(cfg):
+    """
+    task: band_importance -- permutation-importance band attribution for
+    an already-trained checkpoint (see explain/band_importance.py for the
+    method). Reuses the same dataset/model/output_dir/experiment_name/
+    validator config fields as `task: validate`, plus an optional
+    `band_importance:` section (n_repeats, seed, band_names).
+    """
+    from .explain.band_importance import compute_band_importance
+
+    ckpt_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
+    device = cfg["validator"]["device"]
+
+    if cfg["dataset"]["temporal"]:
+        raise NotImplementedError("Band importance is not implemented for temporal datasets.")
+    ds = build_validation_dataset(cfg["dataset"], cfg, ckpt_dir, temporal=False)
+
+    model_wrapper, net, _ = build_model(cfg["model"])
+    epoch, path = highest_epoch(ckpt_dir)
+    if path is None:
+        raise FileNotFoundError(
+            f"No model_epoch*.torch checkpoint found in {ckpt_dir} -- "
+            f"band importance needs a trained model to evaluate."
+        )
+    print(f"Loading checkpoint: epoch {epoch}, {path}")
+    model_wrapper.load(path)
+    model_wrapper.net = model_wrapper.net.to(device).eval()
+
+    bi_cfg = cfg.get("band_importance", {})
+    df = compute_band_importance(
+        model_wrapper=model_wrapper,
+        dataset=ds,
+        device=device,
+        band_names=bi_cfg.get("band_names"),
+        n_repeats=bi_cfg.get("n_repeats", 5),
+        seed=bi_cfg.get("seed", 1337),
+        batch_size=cfg["dataset"].get("batch_size", 32),
+    )
+
+    out_path = os.path.join(ckpt_dir, "band_importance.csv")
+    df.to_csv(out_path, index=False)
+    print(f"Saved {out_path}")
+    return df
+
+
 def run_explain(cfg, ds, net):
     exp_cfg = cfg.get("explain", {})
     if not exp_cfg.get("enabled", False):
@@ -237,6 +282,8 @@ def run(cfg_path):
     elif task == "validate":
         # ds, mw, net = run_training(cfg)  # or load ckpt
         run_validation(cfg)
+    elif task == "band_importance":
+        run_band_importance(cfg)
     elif task == "explain":
         ds, mw, net = run_training(cfg)  # or load ckpt
         run_explain(cfg, ds, net)
