@@ -211,13 +211,17 @@ def run_validation(cfg):
 
 def run_band_importance(cfg):
     """
-    task: band_importance -- permutation-importance band attribution for
-    an already-trained checkpoint (see explain/band_importance.py for the
-    method). Reuses the same dataset/model/output_dir/experiment_name/
-    validator config fields as `task: validate`, plus an optional
-    `band_importance:` section (n_repeats, seed, band_names).
+    task: band_importance -- band attribution for an already-trained
+    checkpoint (see explain/band_importance.py for the methods: global
+    permutation importance per band and per named group, plus optional
+    per-tract ablation importance). Reuses the same dataset/model/
+    output_dir/experiment_name/validator config fields as `task:
+    validate`, plus an optional `band_importance:` section (n_repeats,
+    seed, band_names, groups, per_image).
     """
-    from .explain.band_importance import compute_band_importance
+    from .explain.band_importance import (
+        compute_band_importance, compute_group_importance, compute_per_image_importance,
+    )
 
     ckpt_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
     device = cfg["validator"]["device"]
@@ -238,19 +242,41 @@ def run_band_importance(cfg):
     model_wrapper.net = model_wrapper.net.to(device).eval()
 
     bi_cfg = cfg.get("band_importance", {})
-    df = compute_band_importance(
-        model_wrapper=model_wrapper,
-        dataset=ds,
-        device=device,
-        band_names=bi_cfg.get("band_names"),
-        n_repeats=bi_cfg.get("n_repeats", 5),
-        seed=bi_cfg.get("seed", 1337),
-        batch_size=cfg["dataset"].get("batch_size", 32),
-    )
+    band_names = bi_cfg.get("band_names")
+    groups = bi_cfg.get("groups")
+    n_repeats = bi_cfg.get("n_repeats", 5)
+    seed = bi_cfg.get("seed", 1337)
+    batch_size = cfg["dataset"].get("batch_size", 32)
 
+    print("\n=== Per-band global permutation importance ===")
+    df = compute_band_importance(
+        model_wrapper=model_wrapper, dataset=ds, device=device,
+        band_names=band_names, n_repeats=n_repeats, seed=seed, batch_size=batch_size,
+    )
     out_path = os.path.join(ckpt_dir, "band_importance.csv")
     df.to_csv(out_path, index=False)
     print(f"Saved {out_path}")
+
+    if groups:
+        print("\n=== Per-group global permutation importance ===")
+        df_grouped = compute_group_importance(
+            model_wrapper=model_wrapper, dataset=ds, device=device, groups=groups,
+            band_names=band_names, n_repeats=n_repeats, seed=seed, batch_size=batch_size,
+        )
+        grouped_path = os.path.join(ckpt_dir, "band_importance_grouped.csv")
+        df_grouped.to_csv(grouped_path, index=False)
+        print(f"Saved {grouped_path}")
+
+    if bi_cfg.get("per_image"):
+        print("\n=== Per-tract ablation importance ===")
+        df_per_image = compute_per_image_importance(
+            model_wrapper=model_wrapper, dataset=ds, device=device,
+            band_names=band_names, groups=groups, batch_size=batch_size,
+        )
+        per_image_path = os.path.join(ckpt_dir, "band_importance_per_image.csv")
+        df_per_image.to_csv(per_image_path, index=False)
+        print(f"Saved {per_image_path}")
+
     return df
 
 
