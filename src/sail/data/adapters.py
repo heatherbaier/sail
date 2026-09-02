@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os, json, random
+import math
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -9,30 +11,18 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 from PIL import Image
-import math
-import re
 
 from ..core.base_dataset import BaseDatasetAdapter
 
 
 # ---------- helpers ----------
 
-# _SUFFIX_RE = re.compile(r"^(?P<root>.+)_(?P<idx>\d+)(?P<ext>\.[^.]+)$")
-
-# import os, re
-# from typing import Dict, List, Tuple, Optional
-
 _SUFFIX_RE = re.compile(r"^(?P<root>.+)_(?P<idx>\d+)(?P<ext>\.[^.]+)$")
 
-
-
-
-# Add near the top with the other helpers
-import os, re
-_SUFFIX_RE = re.compile(r"^(?P<root>.+)_(?P<idx>\d+)(?P<ext>\.[^.]+)$")
 
 def _basename(p: str) -> str:
     return os.path.basename(p)
+
 
 def _split_suffix_basename(path: str):
     base = os.path.basename(path)
@@ -41,6 +31,21 @@ def _split_suffix_basename(path: str):
         return m.group("root"), int(m.group("idx")), m.group("ext")
     root, ext = os.path.splitext(base)
     return root, None, ext
+
+
+def _abs_or_join(root_dir: str, p: str) -> str:
+    return p if os.path.isabs(p) else os.path.join(root_dir, p)
+
+
+# ---------- neighbor/duplicate-image support (currently disabled) ----------
+#
+# _build_dups_from_coords and _build_dups_index_by_basename build a
+# base-image -> neighbor-images index (clusterid_1.tiff, clusterid_2.tiff,
+# ...) for the neighbor_images/neighbor_mask outputs mentioned in
+# SimbaJSONDataset's docstring. Neither is currently called -- that
+# feature is wired up but switched off in SimbaJSONDataset.__init__ and
+# __getitem__ (search for "dups_index" there) -- kept here rather than
+# deleted so re-enabling it later doesn't mean reimplementing this.
 
 def _build_dups_from_coords(root_dir: str, ys_keys, coords_keys):
     """
@@ -76,17 +81,6 @@ def _build_dups_from_coords(root_dir: str, ys_keys, coords_keys):
         out[base_full] = paths
     return out
 
-
-# def _split_suffix_basename(path: str) -> Tuple[str, Optional[int], str]:
-#     base = os.path.basename(path)
-#     m = _SUFFIX_RE.match(base)
-#     if m:
-#         return m.group("root"), int(m.group("idx")), m.group("ext")
-#     root, ext = os.path.splitext(base)
-#     return root, None, ext
-
-def _abs_or_join(root_dir: str, p: str) -> str:
-    return p if os.path.isabs(p) else os.path.join(root_dir, p)
 
 def _build_dups_index_by_basename(
     root_dir: str,
@@ -155,11 +149,11 @@ def _build_dups_index_by_basename(
         out[base_full] = [_abs_or_join(root_dir, n) for n in neigh_list]
     return out
 
-    
-    
+
 def _load_json(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
         return json.load(f)
+
 
 def _ensure_rgb(path: str) -> Image.Image:
     img = Image.open(path)
@@ -526,6 +520,7 @@ class _TiffAugment:
 
         return img
 
+
 def resolve_json_paths(data_root: str, prefix: str, with_neighbors: bool = True):
     ys = os.path.join(data_root, f"{prefix}_ys.json")
     coords = os.path.join(data_root, f"{prefix}_coords.json")
@@ -537,6 +532,7 @@ def resolve_json_paths(data_root: str, prefix: str, with_neighbors: bool = True)
     if with_neighbors and (dup is None or not os.path.exists(dup)):
         raise FileNotFoundError(f"Neighbors requested but missing file: {dup}")
     return ys, coords, dup
+
 
 # ---------- core dataset ----------
 
@@ -597,69 +593,42 @@ class SimbaJSONDataset(Dataset):
         self.max_neighbors = max_neighbors
         self.ys = _load_json(ys_path)
         self.ys = {k: v for k, v in self.ys.items() if not math.isnan(v)}
-
         print("NUM YS: ", len(self.ys), ys_path)
 
-        # print(list(self.ys.keys()))
-
-        # dasag
-
         self.coords = _load_json(coords_path)
-        # self.dups_raw = _load_json(dup_path) if dup_path is not None else None
 
-        # ys_keys = list(self.ys.keys())
-
-        # coords_keys = list(self.coords.keys())
-        # self.dups_index = _build_dups_index_by_basename(self.root, ys_keys, coords_keys, self.dups_raw)
-        
-        # # NEW: fallback if empty (handles your BF/PHL case where coords already has _1.._10)
-        # if self.dups_index is not None and len(self.dups_index) == 0:
-        #     self.dups_index = _build_dups_from_coords(self.root, ys_keys, coords_keys)
-        
-        # intersect keys
+        # Neighbor/duplicate-image indexing (dups_raw/dups_index) is
+        # implemented above (_build_dups_index_by_basename,
+        # _build_dups_from_coords) but disabled here -- re-enable by
+        # building self.dups_index from dup_path and intersecting it into
+        # `keys` below, then restoring the neighbor_images/neighbor_mask
+        # block that used to live in __getitem__ (see git history).
         keys = set(self.ys) & set(self.coords)
-        # if self.dups_index is not None:
-        #     keys &= set(self.dups_index)
         self.items = sorted(keys)
-
         print(self.items[0:5])
-
         print(len(self.items))
-
-        # gjhgk
 
         if len(self.items) == 0:
             raise ValueError(
                 "No overlapping base keys across ys/coords (and dups). "
-                # f"ys={len(self.ys)} coords={len(self.coords)} dups={'None' if self.dups_index is None else len(self.dups_index)}\n"
                 f"ys={len(self.ys)} coords={len(self.coords)}\n"
                 f"Example ys key: {next(iter(self.ys)) if self.ys else 'EMPTY'}\n"
                 f"Example coords key: {next(iter(self.coords)) if self.coords else 'EMPTY'}\n"
                 "Hint: We now fall back to grouping neighbors from coords by basename root "
                 "(clusterid_*.tiff). Ensure ys uses either clusterid_1.tiff or clusterid.tiff for the base."
             )
-        
         elif validate:
-            
             print("here in validate!!")
-
-            # If validating the validation set used in training
             if not new:
-
+                # Validating the held-out test split from training: reuse
+                # its saved indices rather than the full item set.
                 p = os.path.join(ckpt_dir, "test_indices.txt")
                 with open(p, "r") as f:
                     test_names = f.read().splitlines()
                     self.items = list(set(self.items) & set(test_names))
-    
                 print(len(self.items))
-
-            # If validating on another dataset
-            else:
-                # set the save path correctly (now it's rewriting)
-                pass
-
-
-             
+            # else: validating on a different dataset entirely -- keep
+            # the full item set as-is.
 
         # -------------------------------
         # Transforms (train vs. val/test)
@@ -675,7 +644,6 @@ class SimbaJSONDataset(Dataset):
         else:
             png_mean, png_std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
-        # Base resize or crop
         if train and augment:
             print("IN TRAIN AND AUGMENT!!")
             resize_or_crop = (
@@ -739,12 +707,8 @@ class SimbaJSONDataset(Dataset):
             self.items = [self.items[i] for i in split_indices]
 
         random.seed(seed)
-        # Optional: for reproducibility of tensor-level ops like RandomErasing
-        try:
-            import torch
-            torch.manual_seed(seed)
-        except Exception:
-            pass
+        # Reproducibility for tensor-level ops like RandomErasing.
+        torch.manual_seed(seed)
 
     def __len__(self) -> int:
         return len(self.items)
@@ -759,42 +723,24 @@ class SimbaJSONDataset(Dataset):
 
         lon, lat = self.coords[rel]
         coords = torch.tensor([float(lat), float(lon)], dtype=torch.float32)
-    
+
         y = self.ys[rel]
         try:
             y_float = float(y)
         except Exception:
             raise ValueError(f"Label for {rel} must be a float, got {y!r}")
         label = torch.tensor(y_float, dtype=torch.float32)
-            
-        out: Dict[str, Any] = {"image": img, "coords": coords, "label": label}
 
-        out["image_name"] = img_path
-    
-        # if self.dups_index is not None:
-        #     neigh_full = self.dups_index.get(rel, [])[: self.max_neighbors]
-        #     n_imgs = []
-        #     for p in neigh_full:
-        #         p_use = p if os.path.isabs(p) else os.path.join(self.root, p)
-        #         if os.path.exists(p_use):
-        #             n_imgs.append(self.tf(_ensure_rgb(p_use)))
-        #     n = len(n_imgs)
-        #     if n == 0:
-        #         pad = torch.zeros_like(img)
-        #         n_imgs = [pad for _ in range(self.max_neighbors)]
-        #         mask = torch.zeros(self.max_neighbors, dtype=torch.float32)
-        #     else:
-        #         pad = torch.zeros_like(n_imgs[0])
-        #         if n < self.max_neighbors:
-        #             n_imgs += [pad for _ in range(self.max_neighbors - n)]
-        #         mask = torch.cat([
-        #             torch.ones(n, dtype=torch.float32),
-        #             torch.zeros(self.max_neighbors - n, dtype=torch.float32)
-        #         ])
-        #     out["neighbor_images"] = torch.stack(n_imgs, dim=0)
-        #     out["neighbor_mask"] = mask
-    
-        return out
+        return {
+            "image": img,
+            "coords": coords,
+            "label": label,
+            "image_name": img_path,
+        }
+        # neighbor_images/neighbor_mask used to be added here when
+        # self.dups_index was populated -- see the comment on dups_index
+        # above and git history for the block that built them.
+
 
 # ---------- adapter (build loaders) ----------
 
@@ -823,41 +769,39 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         band_stats_sample_size: int = 200,
         compute_png_stats: bool = False,
     ):
+        # Common kwargs shared by every split below, so the only thing
+        # that varies per-call is split_indices (and train/augment for
+        # val/test).
+        common = dict(
+            max_neighbors=max_neighbors,
+            img_size=img_size, normalize=normalize, seed=seed,
+            ckpt_dir=ckpt_dir,
+            band_mean=band_mean, band_std=band_std,
+            tif_scale_divisor=tif_scale_divisor,
+            band_stats_sample_size=band_stats_sample_size,
+            compute_png_stats=compute_png_stats,
+        )
+
         # Build an index over the full set to split once. Constructed
-        # first, so if band_mean/band_std aren't given, this is the
-        # instance that actually auto-computes them (from the full,
-        # pre-split item set) and caches to ckpt_dir/band_stats.json --
-        # _train/_val/_test below just load that cache rather than each
-        # recomputing their own from their own split. See
-        # _resolve_or_compute_band_stats for why that sharing matters.
+        # first, so if band_mean/band_std (or PNG stats) aren't given,
+        # this is the instance that actually auto-computes them (from the
+        # full, pre-split item set) and caches to ckpt_dir -- _train/_val/
+        # _test below just load that cache rather than each recomputing
+        # their own from their own split. See _resolve_or_compute_band_stats
+        # for why that sharing matters.
         full = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
-                                split_indices=None, max_neighbors=max_neighbors,
-                                img_size=img_size, normalize=normalize, seed=seed,
-                                ckpt_dir=ckpt_dir,
-                                band_mean=band_mean, band_std=band_std,
-                                tif_scale_divisor=tif_scale_divisor,
-                                band_stats_sample_size=band_stats_sample_size,
-                                compute_png_stats=compute_png_stats)
+                                split_indices=None, **common)
         n = len(full)
         idxs = list(range(n))
-        # idxs = list(range(52))
         random.Random(seed).shuffle(idxs)
         n_train = int(split[0]*n)
         n_val   = int(split[1]*n)
-        # n_train = 32
-        # n_val = 20
         train_idx = idxs[:n_train]
         val_idx   = idxs[n_train:n_train+n_val]
         test_idx  = idxs[n_train+n_val:]
 
         self._train = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
-                                       split_indices=train_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed,
-                                       ckpt_dir=ckpt_dir,
-                                       band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size,
-                                       compute_png_stats=compute_png_stats)
+                                       split_indices=train_idx, **common)
         # train=False/augment=False: val and test must use the
         # deterministic eval transform (resize + normalize only), not the
         # training augmentation pipeline. Both previously defaulted to
@@ -867,40 +811,19 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         # blurred/erased images instead of a stable, comparable eval
         # signal.
         self._val   = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
-                                       split_indices=val_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed,
-                                       train=False, augment=False,
-                                       ckpt_dir=ckpt_dir,
-                                       band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size,
-                                       compute_png_stats=compute_png_stats)
+                                       split_indices=val_idx, train=False, augment=False, **common)
         self._test  = SimbaJSONDataset(root_dir, ys_path, coords_path, dup_path,
-                                       split_indices=test_idx, max_neighbors=max_neighbors,
-                                       img_size=img_size, normalize=normalize, seed=seed,
-                                       train=False, augment=False,
-                                       ckpt_dir=ckpt_dir,
-                                       band_mean=band_mean, band_std=band_std,
-                                       tif_scale_divisor=tif_scale_divisor,
-                                       band_stats_sample_size=band_stats_sample_size,
-                                       compute_png_stats=compute_png_stats)
+                                       split_indices=test_idx, train=False, augment=False, **common)
 
         print("Seed: ", seed)
         print("Write Files: ", write_files)
 
-        # jdkajgaklj
-
         if write_files:
-
-            # Write validation indices to file
             with open(f"{ckpt_dir}/val_indices.txt", "w") as val_file:
-                val_file.write('\n'.join(map(str, self._val.items)))           
-    
-            # Write validation indices to file
+                val_file.write('\n'.join(map(str, self._val.items)))
             with open(f"{ckpt_dir}/test_indices.txt", "w") as test_file:
-                test_file.write('\n'.join(map(str, self._test.items)))     
+                test_file.write('\n'.join(map(str, self._test.items)))
 
-        
         self.bs = batch_size
         self.shuffle_train = shuffle_train
         self.num_workers = num_workers
@@ -917,100 +840,3 @@ class JSONGeoAdapter(BaseDatasetAdapter):
     @property
     def spatial_crs(self) -> str:
         return "EPSG:4326"
-
-
-
-
-# from __future__ import annotations
-# import torch
-# from torch.utils.data import Dataset, DataLoader
-# from typing import Tuple, Dict, Any
-# from ..core.base_dataset import BaseDatasetAdapter
-# from ..core.registries import DatasetRegistry
-
-# import os
-
-
-# # --- Toy dataset that returns image, coords, neighbor_images, label ---
-# class _ToyGeoDataset(Dataset):
-#     def __init__(self, n: int = 512, n_neighbors: int = 4, img_hw: Tuple[int,int]=(224,224), n_classes: int = 10):
-#         self.n = n
-#         self.n_neighbors = n_neighbors
-#         self.H, self.W = img_hw
-#         self.n_classes = n_classes
-
-#         # fixed lat/lon-ish
-#         self.coords = torch.empty(n, 2).uniform_(-60, 60)
-#         self.images = torch.randn(n, 3, self.H, self.W)
-#         self.labels = torch.randint(0, n_classes, (n,))
-#         # pre-generate neighbor images per sample for simplicity
-#         self.neighbors = torch.randn(n, n_neighbors, 3, self.H, self.W)
-
-#     def __len__(self) -> int:
-#         return self.n
-
-#     def __getitem__(self, i: int) -> Dict[str, Any]:
-#         return {
-#             "image": self.images[i],
-#             "coords": self.coords[i],
-#             "neighbor_images": self.neighbors[i],
-#             "label": self.labels[i],
-#         }
-
-# class ToyGeoAdapter(BaseDatasetAdapter):
-#     def __init__(self, batch_size: int = 16, n_neighbors: int = 4, img_hw=(224,224), n_classes: int = 10):
-#         self.bs = batch_size
-#         self.n_neighbors = n_neighbors
-#         self.img_hw = img_hw
-#         self.n_classes = n_classes
-#         self._train = _ToyGeoDataset(512, n_neighbors, img_hw, n_classes)
-#         self._val   = _ToyGeoDataset(128, n_neighbors, img_hw, n_classes)
-#         self._test  = _ToyGeoDataset(128, n_neighbors, img_hw, n_classes)
-
-#     def train_loader(self) -> DataLoader:
-#         return DataLoader(self._train, batch_size=self.bs, shuffle=True, num_workers=0)
-#     def val_loader(self) -> DataLoader:
-#         return DataLoader(self._val, batch_size=self.bs, shuffle=False, num_workers=0)
-#     def test_loader(self) -> DataLoader:
-#         return DataLoader(self._test, batch_size=self.bs, shuffle=False, num_workers=0)
-
-#     @property
-#     def spatial_crs(self) -> str:
-#         return "EPSG:4326"
-
-
-
-
-# def resolve_json_paths(data_root: str, prefix: str, with_neighbors: bool = True):
-#     """
-#     Given a root directory and dataset prefix, resolve JSON file paths.
-
-#     Args:
-#         data_root: Directory containing the JSON files & images.
-#         prefix: Dataset prefix, e.g. "phl" or "western_africa".
-#         with_neighbors: Whether to expect *_dup_ys.json.
-
-#     Returns:
-#         Tuple of (ys_path, coords_path, dup_path or None).
-#     """
-#     ys = os.path.join(data_root, f"{prefix}_ys.json")
-#     coords = os.path.join(data_root, f"{prefix}_coords.json")
-#     dup = os.path.join(data_root, f"{prefix}_dup_ys.json") if with_neighbors else None
-
-#     missing = [p for p in [ys, coords] if not os.path.exists(p)]
-#     if missing:
-#         raise FileNotFoundError(f"Missing required files: {missing}")
-
-#     if with_neighbors and not os.path.exists(dup):
-#         raise FileNotFoundError(f"Neighbors requested but missing file: {dup}")
-
-#     return ys, coords, dup
-
-
-
-
-
-
-# @DatasetRegistry.register("toygeo")
-# def _make_toygeo():
-#     return ToyGeoAdapter()
