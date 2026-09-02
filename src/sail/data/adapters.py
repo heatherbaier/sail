@@ -346,14 +346,12 @@ class _TiffAugment:
         Pass both or neither; if normalize was requested but no stats
         were given, this raises rather than guessing.
 
-    Also mirrors one existing quirk from the PNG train pipeline rather
-    than "fixing" it here: CenterCrop uses a hardcoded 256 regardless of
-    img_size (img_size is only actually used by the eval/Resize path) --
-    same as the original transforms.Compose list, where `resize_or_crop`
-    is computed but never added to tf_list.
+    Sizing mirrors the PNG train pipeline's fix (see the resize_or_crop
+    comment above it): img_size actually controls training resolution
+    now (via Resize, or RandomResizedCrop if use_random_resized_crop),
+    matching eval's Resize(img_size) in the default case -- this used to
+    be a hardcoded 256 center crop regardless of img_size here too.
     """
-
-    TRAIN_CENTER_CROP = 256
 
     def __init__(
         self,
@@ -363,6 +361,7 @@ class _TiffAugment:
         normalize: bool,
         band_mean: Optional[List[float]] = None,
         band_std: Optional[List[float]] = None,
+        use_random_resized_crop: bool = False,
     ):
         self.img_size = img_size
         self.train = train and augment
@@ -376,11 +375,19 @@ class _TiffAugment:
         self.band_mean = band_mean
         self.band_std = band_std
         self.normalize = normalize
+        # RandomResizedCrop is a torchvision v1 transform class, same as
+        # RandomErasing below -- both dispatch through functional kernels
+        # that support tensor input directly (crop + resize, no
+        # colorimetric assertion), so it's safe to reuse as-is here.
+        self._resize_or_crop = (
+            transforms.RandomResizedCrop(img_size, scale=(0.8, 1.0), ratio=(0.9, 1.1))
+            if use_random_resized_crop else None
+        )
         self._erase = transforms.RandomErasing(p=0.25, scale=(0.02, 0.08), ratio=(0.3, 3.3))
 
     def __call__(self, img: torch.Tensor) -> torch.Tensor:
         if self.train:
-            img = TF.center_crop(img, [self.TRAIN_CENTER_CROP, self.TRAIN_CENTER_CROP])
+            img = self._resize_or_crop(img) if self._resize_or_crop is not None else TF.resize(img, list(self.img_size))
             if random.random() < 0.5:
                 img = TF.hflip(img)
             if random.random() < 0.5:
@@ -548,8 +555,16 @@ class SimbaJSONDataset(Dataset):
                 ) if use_random_resized_crop else transforms.Resize(img_size)
             )
             tf_list = [
-                # resize_or_crop,
-                transforms.CenterCrop(size = 256),
+                # Previously a hardcoded CenterCrop(256) sat here instead,
+                # with resize_or_crop computed above but never used --
+                # img_size had no effect on training at all, and train saw
+                # a center crop at native resolution while eval (Resize)
+                # saw the whole chip rescaled: not just a different size
+                # but a different operation, on top of ignoring
+                # use_random_resized_crop entirely. This now actually
+                # sizes training to img_size, matching eval's Resize()
+                # when use_random_resized_crop=False (the default).
+                resize_or_crop,
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
                 transforms.RandomRotation(degrees=20),  # small rotations, keep content
@@ -588,6 +603,7 @@ class SimbaJSONDataset(Dataset):
             normalize=normalize,
             band_mean=band_mean,
             band_std=band_std,
+            use_random_resized_crop=use_random_resized_crop,
         )
 
         if split_indices is not None:
