@@ -681,7 +681,11 @@ class JSONGeoAdapter(BaseDatasetAdapter):
         max_neighbors: int = 10,
         img_size: Tuple[int,int] = (224,224),
         normalize: bool = True,
-        split: Tuple[float,float,float] = (0.8, 0.1, 0.1),
+        # (train, val, test) -- original 3-way behavior, unchanged -- or
+        # (train, val) summing to 1.0 for a 2-way split with no test set
+        # held out at all (see the two_way handling below for why that's
+        # not just "test gets 0 items", but an alias for val instead).
+        split: Tuple[float, ...] = (0.8, 0.1, 0.1),
         # "random": original behavior -- shuffle a plain index range and
         # slice it. Depends on dataset size/order, so it is NOT stable
         # across two datasets built from different (even overlapping)
@@ -723,23 +727,46 @@ class JSONGeoAdapter(BaseDatasetAdapter):
                                 band_mean=band_mean, band_std=band_std,
                                 tif_scale_divisor=tif_scale_divisor,
                                 band_stats_sample_size=band_stats_sample_size)
+        # split as (train, val) instead of (train, val, test): no test
+        # set is held out at all -- "test" becomes an alias for the same
+        # items as "val" (test_idx = val_idx below) rather than a third,
+        # separately-starved bucket. Exists because task: validate's
+        # new=False path (what actually produces the epoch<N>_..._preds.csv
+        # files this project's analysis scripts consume) reads
+        # test_indices.txt, NOT val_indices.txt -- Trainer.fit() is the
+        # only thing that reads val_loader()/val_indices.txt, for its
+        # per-epoch training-time loss. So a 3-way split with no analysis
+        # code ever touching the "val" bucket just quietly sets aside an
+        # extra ~10% of tracts nothing downstream uses -- costly on a
+        # state with few tracts to begin with. Two-way split gives that
+        # 10% back to val, and val_indices.txt/test_indices.txt end up
+        # identical (both files are still written, so nothing downstream
+        # needs to change or special-case this).
+        two_way = len(split) == 2
+        if two_way and abs(sum(split) - 1.0) > 1e-6:
+            raise ValueError(f"2-element split must sum to 1.0 (no leftover test "
+                              f"fraction implied), got {split} (sums to {sum(split)})")
+        split3 = (split[0], split[1], 0.0) if two_way else tuple(split)
+
         n = len(full)
         if split_strategy == "random":
             idxs = list(range(n))
             random.Random(seed).shuffle(idxs)
-            n_train = int(split[0]*n)
-            n_val   = int(split[1]*n)
+            n_train = int(split3[0]*n)
+            n_val   = int(split3[1]*n) if not two_way else n - n_train
             train_idx = idxs[:n_train]
             val_idx   = idxs[n_train:n_train+n_val]
-            test_idx  = idxs[n_train+n_val:]
+            test_idx  = val_idx if two_way else idxs[n_train+n_val:]
         elif split_strategy == "stable":
             from .splitting import compute_stable_split
-            buckets = compute_stable_split(full.items, full.coords, seed, split, spatial_block_deg)
+            buckets = compute_stable_split(full.items, full.coords, seed, split3, spatial_block_deg)
             train_idx, val_idx, test_idx = [], [], []
             for i, it in enumerate(full.items):
                 bucket = buckets[it]
                 (train_idx if bucket == "train" else
                  val_idx if bucket == "val" else test_idx).append(i)
+            if two_way:
+                test_idx = val_idx
             realized = tuple(round(len(x) / n, 3) for x in (train_idx, val_idx, test_idx)) if n else (0, 0, 0)
             block_note = f", spatial_block_deg={spatial_block_deg}" if spatial_block_deg else ""
             print(f"[stable split] requested {split}, realized {realized} over n={n} items{block_note}")
