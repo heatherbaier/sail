@@ -134,19 +134,29 @@ def parse_ym(fname: str):
 
 class TemporalSchoolDataset(torch.utils.data.Dataset):
 
-    def __init__(self, 
-                 json_path, 
-                 img_dir, 
-                 normalize=True, 
-                 T=12, 
-                 pad_fill="zeros", 
-                 start_from=None, 
+    def __init__(self,
+                 json_path,
+                 img_dir,
+                 normalize=True,
+                 T=12,
+                 pad_fill="zeros",
+                 start_from=None,
                  img_size = [256, 256],
-                 validate = False):
+                 validate = False,
+                 train = True):
         """
         T: global #frames to return
         pad_fill: "zeros" or "mean"
         start_from: optional (year, month) to align index 0; else earliest found
+        train: which pipeline to build -- True gets the random-augmented
+            training pipeline (RandomCrop, flips, rotation, jitter, blur);
+            False gets a deterministic eval pipeline (CenterCrop only, no
+            random ops). Previously there was only one pipeline, always
+            built with CenterCrop and always including every random-
+            augmentation step regardless of train/val/test -- see
+            TemporalGeoAdapter for why that meant val/test loss was being
+            computed on randomly flipped/rotated/jittered/blurred frames,
+            same bug already fixed for the non-temporal path.
         """
         import json
         with open(json_path, 'r') as f:
@@ -158,34 +168,35 @@ class TemporalSchoolDataset(torch.utils.data.Dataset):
         self.start_from = start_from
         self.pad_value = 0
         self.img_size = img_size
+        self.train = train
 
-        self.tx = transforms.Compose([
-                
-                transforms.CenterCrop(img_size),
-                
+        if self.train:
+            tf_list = [
+                # RandomCrop (was CenterCrop, even for training -- a
+                # deterministic crop on every training epoch means the
+                # model always sees the exact same crop of a given frame,
+                # which is not actually an augmentation). pad_if_needed
+                # guards against any frame smaller than img_size, matching
+                # CenterCrop's implicit auto-pad behavior below.
+                transforms.RandomCrop(img_size, pad_if_needed=True),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
                 transforms.RandomRotation(degrees=20),  # small rotations, keep content
                 transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
                 transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))], p=0.2),
-                
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-                
-            ])
-        
-        # self.tx = transforms.Compose([
-        #     transforms.CenterCrop(img_size),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
-        # ])
-        # self.pad_value = torch.zeros(3, *img_size)  # normalized space (≈ 0) is fine
-        # 
-        # else:
-        #     self.tx = transforms.Compose([transforms.Resize(img_size),
-        #                                   transforms.ToTensor()])
-        #     self.pad_value = torch.zeros(3, *img_size)
+            ]
+        else:
+            # Deterministic eval pipeline: crop (still needed to get a
+            # fixed size out of variable-size frames) but no random ops.
+            tf_list = [
+                transforms.CenterCrop(img_size),
+                transforms.ToTensor(),
+            ]
+        if normalize:
+            tf_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                 std=[0.229, 0.224, 0.225]))
+        self.tx = transforms.Compose(tf_list)
 
         # optional: precompute dataset mean for padding
         self.dataset_mean = None
@@ -314,33 +325,18 @@ class TemporalGeoAdapter:
 
         print("IMG_SIZE: ", img_size)
 
-        # --- transforms ---
-        if normalize:
-            transform = transforms.Compose([
-                
-                transforms.CenterCrop(img_size),
-                
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomVerticalFlip(p=0.5),
-                transforms.RandomRotation(degrees=20),  # small rotations, keep content
-                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
-                transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))], p=0.2),
-                
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-                
-            ])
-        else:
-            transform = transforms.Compose([
-                transforms.Resize(img_size),
-                transforms.ToTensor(),
-            ])
-
         # --- build datasets ---
-        self._train = TemporalSchoolDataset(ys_path, root_dir, transform)
-        self._val   = TemporalSchoolDataset(ys_path, root_dir, transform)
-        self._test  = TemporalSchoolDataset(ys_path, root_dir, transform)
+        # Each TemporalSchoolDataset builds its own pipeline internally
+        # from (normalize, img_size, train) -- there used to be a
+        # `transform` Compose built here and passed as a third positional
+        # arg, but TemporalSchoolDataset.__init__'s third parameter is
+        # `normalize` (a bool), not a transform, so that Compose was
+        # silently never used; every dataset built its own pipeline
+        # regardless, always the augmented one (see TemporalSchoolDataset
+        # for the val/test-augmentation-leak fix that went with this).
+        self._train = TemporalSchoolDataset(ys_path, root_dir, normalize=normalize, img_size=img_size, train=True)
+        self._val   = TemporalSchoolDataset(ys_path, root_dir, normalize=normalize, img_size=img_size, train=False)
+        self._test  = TemporalSchoolDataset(ys_path, root_dir, normalize=normalize, img_size=img_size, train=False)
         self._train.ids = train_ids
         self._val.ids   = val_ids
         self._test.ids  = test_ids
