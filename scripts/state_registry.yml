@@ -1,0 +1,59 @@
+# Per-state settings that MUST stay identical across every quarter/year/
+# variable trained for that state -- see scripts/generate_train_config.py,
+# which reads this file so you never have to copy-paste these by hand.
+#
+# spatial_block_deg: from scripts/find_spatial_block_deg.py's sweep against
+#   that state's real tract layout (a single number that works for one
+#   state can be wrong for another -- see the AZ vs GA sweep discussion).
+# band_mean / band_std: from scripts/compute_shared_band_stats.py, pooled
+#   across that state's quarters -- NOT sail's per-quarter auto-computed
+#   default (see the normalization discussion re: erasing cross-quarter
+#   flatness signal).
+# data_root_template / base_prefix_template: Python .format() strings,
+#   filled in with state/year/quarter by generate_train_config.py. Must
+#   match this state's actual directory/prefix convention on disk --
+#   confirm against a real geoetl output.root / sail dataset.prefix for
+#   this state before trusting the generator's output.
+
+az:
+  fips: "04"
+  data_root_template: "/data/hbaier/new_data/tlag/az_imagery/q{quarter}_{year}_s2_allbands/"
+  base_prefix_template: "az_{year}_q{quarter}_s2_allbands"
+  in_channels: 12
+  spatial_block_deg: 0.15
+  band_mean: [0.09006, 0.100938, 0.140538, 0.182718, 0.209559, 0.236259, 0.247468, 0.252709, 0.257845, 0.260785, 0.279013, 0.239055]
+  band_std: [0.061981, 0.066142, 0.071373, 0.087151, 0.086127, 0.083298, 0.084512, 0.087946, 0.085348, 0.084769, 0.09928, 0.095399]
+
+# TODO: confirm GA's actual data_root/prefix convention (only its
+# spatial_block_deg sweep has been run so far) and fill in data_root_template/
+# base_prefix_template/band_mean/band_std before generating GA configs --
+# the generator refuses to run for a state with any null field below.
+ga:
+  fips: "13"
+  data_root_template: null
+  base_prefix_template: null
+  in_channels: 12
+  spatial_block_deg: 0.2
+  band_mean: null
+  band_std: null
+
+# TODO: run find_spatial_block_deg.py and compute_shared_band_stats.py for
+# CA once its imagery is downloaded, then fill in every field below.
+ca:
+  fips: "06"
+  data_root_template: null
+  base_prefix_template: null
+  in_channels: 12
+  spatial_block_deg: null
+  band_mean: null
+  band_std: null
+
+# TODO: same as CA -- nothing computed for PA yet.
+pa:
+  fips: "42"
+  data_root_template: null
+  base_prefix_template: null
+  in_channels: 12
+  spatial_block_deg: null
+  band_mean: null
+  band_std: null
