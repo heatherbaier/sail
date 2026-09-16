@@ -27,17 +27,28 @@ def main():
 
     config_path = os.path.abspath(args.config)
 
-    # Optional: copy config into output_dir for reproducibility
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f)
-    out_dir = cfg.get("output_dir", "artifacts/checkpoints/default_run")
-    os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "config_used.yaml"), "w") as f:
-        yaml.safe_dump(cfg, f)
 
     print(f"🚀 Launching SAIL task: {cfg.get('task', 'train')}  (config: {config_path})")
     run_engine(config_path)
     print("✅ Run complete.")
+
+    # Copy config into the run's own per-experiment directory for
+    # reproducibility, e.g. output_dir/experiment_name/config_used.yaml --
+    # not output_dir/config_used.yaml, which would get overwritten by every
+    # other experiment sharing that same output_dir. Written AFTER
+    # run_engine() returns (not before) because sail.engine.run_training()
+    # creates output_dir/experiment_name itself with plain os.mkdir() (no
+    # exist_ok=True) so it can fail loudly on an experiment_name collision --
+    # pre-creating it here first would break that check on every train run.
+    out_dir = os.path.join(
+        cfg.get("output_dir", "artifacts/checkpoints/default_run"),
+        cfg.get("experiment_name", ""),
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "config_used.yaml"), "w") as f:
+        yaml.safe_dump(cfg, f)
 
 
 if __name__ == "__main__":
