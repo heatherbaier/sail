@@ -23,23 +23,61 @@ ckpt_dir. --version defaults to auto-detecting the next unused v<N> under
 that state/quarter/variable's output_dir, so you don't have to track and
 bump it by hand either.
 
+Also writes a matching SLURM job file (.sh, next to the .yml) that runs
+`python launch.py --config <that config>`. The SLURM directives (nodes,
+GPU/CPU count, walltime, partition/QOS, module load, conda env, working
+directory) are a fixed template taken from a real job file that's already
+worked on ASU RC -- only the job name, config path, and output/error
+filenames vary per run, since guessing at cluster-specific resource
+settings is a good way to submit a job that fails outright or burns real
+allocation for nothing. --conda-env/--repo-dir/--nodes/--gpus/--cpus/
+--walltime/--partition/--qos override the template's defaults if your
+setup ever changes.
+
 Usage:
     python generate_train_config.py --state az --year 2016 --quarter 1 \
         --variable wealth_index_sat
-    # writes configs/tlags/az/az_2016_q1_wealth_index_sat_train.yml,
-    # auto-picking the next unused version (v1, v2, ...)
+    # writes configs/tlags/az/az_2016_q1_wealth_index_sat_train.yml AND
+    # az_2016_q1_wealth_index_sat_train.sh, auto-picking the next unused
+    # version (v1, v2, ...)
 
     python generate_train_config.py --state az --year 2016 --quarter 1 \
         --variable wealth_index_sat --launch
-    # generates the config AND immediately runs `python launch.py --config ...`
+    # generates both files AND immediately runs `sbatch <job file>`
 """
 
 import argparse
 import os
 import subprocess
-import sys
 
 import yaml
+
+JOB_TEMPLATE = """#!/bin/bash
+#SBATCH -N {nodes}            # number of nodes
+#SBATCH -G {gpus}
+#SBATCH -c {cpus}            # number of cores
+#SBATCH -t {walltime}   # time in d-hh:mm:ss
+#SBATCH -p {partition}      # partition
+#SBATCH -q {qos}       # QOS
+#SBATCH -J {experiment_name}
+#SBATCH -o slurm.{experiment_name}.%j.out # file to save job's STDOUT (%j = JobId)
+#SBATCH -e slurm.{experiment_name}.%j.err # file to save job's STDERR (%j = JobId)
+#SBATCH --mail-type=ALL # Send an e-mail when a job starts, stops, or fails
+#SBATCH --mail-user="%u@asu.edu"
+#SBATCH --export=NONE   # Purge the job-submitting shell environment
+
+#Load required software
+module load mamba/latest
+
+#Activate our environment
+source activate {conda_env}
+
+#Change to the directory of our script
+cd {repo_dir}
+
+#Run the software/python script
+python launch.py --config {config_path}
+"""
 
 TARGET_CHOICES = [
     "wealth_index",
@@ -133,6 +171,17 @@ def build_config(state, year, quarter, variable, epochs, lr, batch_size, version
     return cfg, experiment_name
 
 
+def write_job_file(job_path, experiment_name, config_path, nodes, gpus, cpus,
+                    walltime, partition, qos, conda_env, repo_dir):
+    content = JOB_TEMPLATE.format(
+        nodes=nodes, gpus=gpus, cpus=cpus, walltime=walltime,
+        partition=partition, qos=qos, experiment_name=experiment_name,
+        conda_env=conda_env, repo_dir=repo_dir, config_path=config_path,
+    )
+    with open(job_path, "w") as f:
+        f.write(content)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -147,8 +196,18 @@ def main():
                     help="Default: auto-detect the next unused v<N> for this "
                          "state/quarter/year/variable combo")
     p.add_argument("--out", default=None, help="Default: configs/tlags/<state>/<state>_<year>_q<quarter>_<variable>_train.yml")
+    p.add_argument("--job-out", default=None, help="Default: same path as --out, with .sh instead of .yml")
+    p.add_argument("--no-job-file", action="store_true", help="Skip writing the SLURM job file")
+    p.add_argument("--nodes", default="1")
+    p.add_argument("--gpus", default="1")
+    p.add_argument("--cpus", default="8")
+    p.add_argument("--walltime", default="72:00:00")
+    p.add_argument("--partition", default="general")
+    p.add_argument("--qos", default="grp_hbaier")
+    p.add_argument("--conda-env", default="geomain")
+    p.add_argument("--repo-dir", default="/home/hbaier/packages/sail/")
     p.add_argument("--launch", action="store_true",
-                    help="Run `python launch.py --config <generated>` immediately after writing it")
+                    help="Run `sbatch <job file>` immediately after writing it (requires the job file, i.e. not --no-job-file)")
     args = p.parse_args()
 
     registry = load_registry()
@@ -164,14 +223,24 @@ def main():
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
-
     print(f"Wrote {out_path}")
     print(f"experiment_name: {experiment_name}")
-    print(f"\n  python launch.py --config {out_path}\n")
+
+    job_path = None
+    if not args.no_job_file:
+        job_path = args.job_out or os.path.splitext(out_path)[0] + ".sh"
+        write_job_file(job_path, experiment_name, out_path, args.nodes, args.gpus,
+                        args.cpus, args.walltime, args.partition, args.qos,
+                        args.conda_env, args.repo_dir)
+        print(f"Wrote {job_path}")
+        print(f"\n  sbatch {job_path}\n")
+    else:
+        print(f"\n  python launch.py --config {out_path}\n")
 
     if args.launch:
-        launch_py = os.path.join(REPO_ROOT, "launch.py")
-        subprocess.run([sys.executable, launch_py, "--config", out_path], check=True)
+        if job_path is None:
+            raise SystemExit("--launch requires a job file -- drop --no-job-file")
+        subprocess.run(["sbatch", job_path], check=True)
 
 
 if __name__ == "__main__":
