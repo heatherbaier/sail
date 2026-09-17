@@ -155,11 +155,21 @@ def run_validation(cfg):
         append = "full"
     else:
         append = "valset"
-    
-    
+
     model_wrapper, net, _ = build_model(cfg["model"])
     epoch, path = highest_epoch(ckpt_dir)
     print(epoch, path)
+
+    # Include which dataset was actually evaluated in the output filename.
+    # Without this, validating the SAME checkpoint (same ckpt_dir) against
+    # more than one dataset -- e.g. cross-quarter generalization, where one
+    # model's checkpoint is validated against several different quarters'
+    # imagery, all restricted to that model's own test_indices.txt -- would
+    # silently overwrite the previous run's predictions, since epoch+append
+    # alone doesn't distinguish which dataset produced them.
+    preds_path = os.path.join(
+        ckpt_dir, f"epoch{epoch}_{append}_{cfg['dataset']['prefix']}_preds.csv"
+    )
     model_wrapper.load(path)
     model_wrapper.net = model_wrapper.net.to(device).eval()
     
@@ -188,15 +198,15 @@ def run_validation(cfg):
             # if extras[0] is not None:
                 # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
                 
-            df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_{append}_preds.csv"))  
+            df.to_csv(preds_path)
 
     df = pd.DataFrame()
     df["name"], df["pred"], df["label"], df["extra"] = imnames, preds, labels, all_extras
-    
+
     # if extras[0] is not None:
         # df["extra"] = df["extra"].apply(lambda x: x.detach().cpu().numpy().flatten())
-    
-    df.to_csv(os.path.join(ckpt_dir, f"epoch{epoch}_{append}_preds.csv"))  
+
+    df.to_csv(preds_path)
 
     # metrics = loops.validate_loop(
     #     model_wrapper,
