@@ -1,4 +1,15 @@
 """
+SUPERSEDED for AZ/GA/CA/PA going forward -- see
+uswealth-geoai/pipeline_configs/generate_train_config.py, which does the
+same thing but writes its generated configs into that project repo (so
+replicating the paper only ever needs uswealth-geoai cloned +
+`pip install -r requirements.txt` there, not a `cd` into this repo), runs
+via the installed `simba` command instead of `python launch.py`, and reads
+a merged registry that also covers geoetl's per-state settings. Kept here,
+and still functional, only because AZ isn't migrated to that merged
+registry yet. Don't add new states here; add them to uswealth-geoai's
+registry instead.
+
 Generate a ready-to-launch sail train config from --state/--year/--quarter/
 --variable, instead of hand-editing a YAML file (and re-copying seed/split/
 split_strategy/spatial_block_deg/band_mean/band_std by hand) for every run.
