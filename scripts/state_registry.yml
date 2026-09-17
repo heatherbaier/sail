@@ -33,7 +33,15 @@ ga:
   data_root_template: null
   base_prefix_template: null
   in_channels: 12
-  spatial_block_deg: 0.2
+  # 0.15 chosen from find_spatial_block_deg.py's real GA sweep: split
+  # proportions stay close to 80/10/10 through 0.15 (79.1/7.9/13.0,
+  # same profile as 0.10) while cutting cross-split neighbor leakage to
+  # 18.8% (vs 22.1% at 0.10). 0.20+ starts visibly skewing the splits
+  # (val jumps to 14.1% at 0.20) and 0.30/0.50 hit the block-domination
+  # failure mode outright (test balloons to 19.1% at 0.30; train to
+  # 87.0%/val collapses to 2.3% at 0.50) as a few oversized blocks over
+  # Atlanta's metro tract density swallow disproportionate tract counts.
+  spatial_block_deg: 0.15
   band_mean: null
   band_std: null
 
