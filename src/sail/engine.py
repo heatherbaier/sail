@@ -30,8 +30,9 @@ def load_config(path: str) -> dict:
 
 def run_training(cfg):
 
+    # os.mkdir(output_dir, exists_ok = True)
     output_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
-    os.mkdir(output_dir)
+    os.makedirs(output_dir)
 
     if cfg["model"]["name"] == "geoconv":
         print("geoconv!!")
