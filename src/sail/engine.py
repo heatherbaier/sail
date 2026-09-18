@@ -327,3 +327,16 @@ def run(cfg_path):
     else:
         raise ValueError(f"Unknown task: {task}")
 
+    # Copy the config into this run's own output_dir/experiment_name/ for
+    # reproducibility -- every task above uses that exact same directory
+    # (run_training() creates it fresh; validate/band_importance/explain
+    # reuse one a prior `task: train` already created), so this is safe to
+    # do unconditionally, once, right here, after the dispatch above --
+    # rather than duplicated in every CLI entry point that calls run()
+    # (both launch.py and the installed `simba` command go through this
+    # one function, so both get it for free).
+    out_dir = os.path.join(cfg["output_dir"], cfg["experiment_name"])
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "config_used.yaml"), "w") as f:
+        yaml.safe_dump(cfg, f)
+
