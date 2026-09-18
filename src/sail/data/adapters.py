@@ -13,6 +13,7 @@ import math
 import re
 
 from ..core.base_dataset import BaseDatasetAdapter
+from .splitting import item_key
 
 
 # ---------- helpers ----------
@@ -531,8 +532,25 @@ class SimbaJSONDataset(Dataset):
                 p = os.path.join(ckpt_dir, "test_indices.txt")
                 with open(p, "r") as f:
                     test_names = f.read().splitlines()
-                    self.items = list(set(self.items) & set(test_names))
-    
+                # test_indices.txt stores the FULL chip paths from whatever
+                # dataset actually trained this checkpoint (e.g.
+                # .../q1_2016_s2_allbands/chips/<GEOID>.tif) -- comparing
+                # those full strings against self.items breaks the moment
+                # this dataset points at a DIFFERENT quarter's data_root
+                # (cross-quarter generalization: same checkpoint, evaluated
+                # against a different quarter's imagery, restricted to its
+                # own held-out locations). Two different quarters' full
+                # paths for the exact same GEOID never string-match, so the
+                # intersection came back empty -- no error, just an empty
+                # dataset and an empty predictions CSV. Match on the
+                # basename stem (the same identity item_key() uses for the
+                # stable split itself, for the same reason: dataset/
+                # directory-independent identity) so this works whether
+                # dataset.data_root is this checkpoint's own quarter or a
+                # different one.
+                test_keys = {item_key(t) for t in test_names}
+                self.items = [it for it in self.items if item_key(it) in test_keys]
+
                 print(len(self.items))
 
             # If validating on another dataset
