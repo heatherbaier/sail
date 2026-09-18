@@ -30,12 +30,12 @@ az:
 # the generator refuses to run for a state with any null field below.
 ga:
   fips: "13"
-  data_root_template: null
-  base_prefix_template: null
+  data_root_template: "/data/hbaier/new_data/tlag/ga_imagery/q{quarter}_{year}_s2_allbands/"
+  base_prefix_template: "ga_{year}_q{quarter}_s2_allbands"
   in_channels: 12
-  spatial_block_deg: 0.2
-  band_mean: null
-  band_std: null
+  spatial_block_deg: 0.15
+  band_mean: [0.047564, 0.046274, 0.068636, 0.065091, 0.107091, 0.206508, 0.240632, 0.250842, 0.267487, 0.274737, 0.202095, 0.120538]
+  band_std:  [0.054595, 0.054495, 0.055723, 0.062511, 0.064379, 0.088588, 0.102902, 0.101381, 0.106818, 0.12025, 0.095319, 0.081527]
 
 # TODO: run find_spatial_block_deg.py and compute_shared_band_stats.py for
 # CA once its imagery is downloaded, then fill in every field below.

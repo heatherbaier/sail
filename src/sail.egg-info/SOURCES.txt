@@ -3,6 +3,7 @@ README.md
 pyproject.toml
 src/sail/__init__.py
 src/sail/_version.py
+src/sail/engine-Copy1.py
 src/sail/engine.py
 src/sail.egg-info/PKG-INFO
 src/sail.egg-info/SOURCES.txt
@@ -19,7 +20,10 @@ src/sail/core/registries.py
 src/sail/data/__init__.py
 src/sail/data/adapters.py
 src/sail/data/instance_index.py
+src/sail/data/splitting.py
+src/sail/data/temporal_adapters.py
 src/sail/explain/__init__.py
+src/sail/explain/band_importance.py
 src/sail/explain/perturbations.py
 src/sail/explain/simba.py
 src/sail/explain/simba_explainer.py
@@ -33,6 +37,7 @@ src/sail/models/geoconv.py
 src/sail/models/resnet18.py
 src/sail/models/swin.py
 src/sail/models/tang2015.py
+src/sail/models/temporal_resnet.py
 src/sail/models/utils.py
 src/sail/training/trainer.py
 src/sail/utils/io.py
