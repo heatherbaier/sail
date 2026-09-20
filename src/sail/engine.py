@@ -167,8 +167,25 @@ def run_validation(cfg):
     # imagery, all restricted to that model's own test_indices.txt -- would
     # silently overwrite the previous run's predictions, since epoch+append
     # alone doesn't distinguish which dataset produced them.
+    #
+    # validator.output_subdir (optional) additionally routes the CSV into
+    # ckpt_dir/<output_subdir>/ instead of ckpt_dir directly -- used by
+    # cross-quarter generalization configs so those predictions don't
+    # accumulate alongside the model's own single-quarter validate output
+    # in the same directory. 3_validation/validate.py's per-quarter glob
+    # expects exactly one epoch*_valset_*_preds.csv directly under each
+    # quarter's ckpt_dir (the model's own held-out test set); a second,
+    # differently-prefixed CSV landing there from a cross-quarter run
+    # would break that "exactly 1 match" assumption. Left unset (the
+    # default, what generate_validate_config.py's normal single-quarter
+    # configs use), this is exactly the pre-existing behavior.
+    output_dir_for_preds = ckpt_dir
+    output_subdir = cfg.get("validator", {}).get("output_subdir")
+    if output_subdir:
+        output_dir_for_preds = os.path.join(ckpt_dir, output_subdir)
+        os.makedirs(output_dir_for_preds, exist_ok=True)
     preds_path = os.path.join(
-        ckpt_dir, f"epoch{epoch}_{append}_{cfg['dataset']['prefix']}_preds.csv"
+        output_dir_for_preds, f"epoch{epoch}_{append}_{cfg['dataset']['prefix']}_preds.csv"
     )
     model_wrapper.load(path)
     model_wrapper.net = model_wrapper.net.to(device).eval()
