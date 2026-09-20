@@ -1,4 +1,10 @@
 """
+SUPERSEDED for AZ/GA/CA/PA going forward -- see
+uswealth-geoai/pipeline_configs/generate_validate_config.py (same
+reasoning as generate_train_config.py's superseded note). Kept here, and
+still functional, only because AZ isn't migrated to the merged registry
+yet.
+
 Generate a ready-to-launch sail `task: validate` config from --state/--year/
 --quarter/--variable, matching an already-trained run produced by
 generate_train_config.py -- instead of hand-copying a YAML file and making

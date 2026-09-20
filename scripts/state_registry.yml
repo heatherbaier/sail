@@ -1,3 +1,9 @@
+# SUPERSEDED for AZ/GA/CA/PA going forward -- see
+# uswealth-geoai/pipeline_configs/state_registry.yml, the merged registry
+# covering both this and geoetl's per-state settings. Kept here only for
+# AZ reference until it's migrated there (PA is already set up directly
+# in the new registry instead of here).
+#
 # Per-state settings that MUST stay identical across every quarter/year/
 # variable trained for that state -- see scripts/generate_train_config.py,
 # which reads this file so you never have to copy-paste these by hand.
